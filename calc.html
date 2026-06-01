@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Calculus Simulator</title>
+    <link rel="icon" type="image/png" href="assets/calc.png">
+    <!-- Desmos API -->
+    <script src="https://www.desmos.com/api/v1.8/calculator.js?apiKey=dcb31709b452b1cf9dc26972add0fda6"></script>
+    <!-- Font Awesome 6 (free icons) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+        }
+
+        body {
+            display: flex;
+        }
+
+        #graph-container {
+            flex: 1;
+            height: 100%;
+            min-width: 0;
+            position: relative;
+            border-right: 1px solid #333;
+        }
+
+        #calculator {
+            width: 100%;
+            height: 100%;
+        }
+
+        #sidebar {
+            width: 350px;
+            min-width: 350px;
+            height: 100%;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            padding: 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: -4px 0 15px rgba(0,0,0,0.5);
+            z-index: 10;
+            overflow-y: auto;
+        }
+
+        h2 {
+            margin: 0;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+            font-size: 1.5rem;
+            color: #4da6ff;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 0.9rem;
+            color: #bbbbbb;
+            font-weight: 500;
+        }
+
+        input[type="text"] {
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background-color: #2a2a2a;
+            color: #fff;
+            font-size: 1.1rem;
+            transition: border-color 0.2s;
+            font-family: monospace;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #4da6ff;
+        }
+
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #252525;
+            padding: 12px;
+            border-radius: 6px;
+        }
+
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #4da6ff;
+        }
+
+        .note {
+            font-size: 0.85rem;
+            color: #aaa;
+            line-height: 1.5;
+            background: #222;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 3px solid #4da6ff;
+        }
+
+        .note i {
+            width: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="graph-container">
+        <div id="calculator"></div>
+    </div>
+
+    <div id="sidebar">
+        <h2>Calculus Simulator</h2>
+
+        <div class="control-group">
+            <label for="function-input">Function: f(x) =</label>
+            <input type="text" id="function-input" value="0.5x^2 sin(x) + 2" placeholder="e.g. x^2, sin(x), sqrt(x), abs(x)">
+        </div>
+
+        <div class="toggle-group">
+            <input type="checkbox" id="show-derivative" checked>
+            <label for="show-derivative" style="color: #4ade80;">
+                <i class="fas fa-circle" style="color: #4ade80; font-size: 0.8em;"></i> Show Draggable Derivative
+            </label>
+        </div>
+
+        <div class="toggle-group">
+            <input type="checkbox" id="show-integral" checked>
+            <label for="show-integral" style="color: #f87171;">
+                <i class="fas fa-circle" style="color: #f87171; font-size: 0.8em;"></i> Show Draggable Integral
+            </label>
+        </div>
+
+        <div class="note">
+            <strong>How to interact:</strong><br><br>
+            <i class="fas fa-circle" style="color: #4ade80;"></i> <strong>Derivative:</strong> Drag the green point along the curve to see the tangent line (slope) change.<br><br>
+            <i class="fas fa-circle" style="color: #f87171;"></i> <strong>Integral:</strong> Drag the two red points on the x-axis to change the shaded area under the curve.<br><br>
+            <strong><i class="fas fa-info-circle"></i> Input tip:</strong> Use plain notation: <code>sin(x)</code>, <code>cos(x)</code>, <code>sqrt(x)</code>, <code>log(x)</code>, <code>abs(x)</code> – no LaTeX backslashes needed.<br>
+            (For nested expressions like <code>abs(x^2-1)</code>, writing <code>|x^2-1|</code> also works.)
+        </div>
+    </div>
+
+    <script>
+        const elt = document.getElementById('calculator');
+        const calculator = Desmos.GraphingCalculator(elt, {
+            keypad: false,
+            expressions: false,
+            settingsMenu: false,
+            zoomButtons: true,
+            invertedColors: true
+        });
+
+        /**
+         * Converts plain function names to proper Desmos LaTeX.
+         *   sin(x)   → \sin(x)
+         *   sqrt(x)  → \sqrt{x}
+         *   abs(x)   → \left|x\right|   (bulletproof absolute value)
+         *   log(x)   → \log(x)
+         * etc.
+         * Existing backslashes are preserved.
+         */
+        function normalizeExpression(input) {
+            if (!input) return input;
+
+            // 1. Transform sqrt(...)  → \sqrt{...}
+            input = input.replace(/sqrt\(([^()]*)\)/g, '\\sqrt{$1}');
+
+            // 2. Transform abs(...)   → \left| ... \right|  (always works)
+            input = input.replace(/abs\(([^()]*)\)/g, '\\left|$1\\right|');
+
+            // 3. For other functions: add a backslash if it's missing, but only if followed by '('
+            const funcs = ['sin', 'cos', 'tan', 'cot', 'sec', 'csc',
+                           'log', 'ln', 'exp', 'max', 'min', 'floor', 'ceil'];
+            funcs.forEach(fn => {
+                const regex = new RegExp('(^|[^\\\\])' + fn + '\\(', 'g');
+                input = input.replace(regex, '$1\\' + fn + '(');
+            });
+
+            return input;
+        }
+
+        function updateGraph() {
+            const rawFuncStr = document.getElementById('function-input').value.trim();
+            const showDeriv = document.getElementById('show-derivative').checked;
+            const showInt   = document.getElementById('show-integral').checked;
+
+            if (!rawFuncStr) return;
+
+            // Convert plain input to Desmos-friendly LaTeX
+            const funcStr = normalizeExpression(rawFuncStr);
+
+            calculator.setBlank();
+
+            // 1. Base function f(x)
+            calculator.setExpression({
+                id: 'f',
+                latex: 'f(x)=' + funcStr,
+                color: '#4da6ff',
+                lineWidth: 3
+            });
+
+            // 2. Draggable derivative (tangent line)
+            if (showDeriv) {
+                calculator.setExpression({ id: 'xd', latex: 'x_d=2' });
+
+                calculator.setExpression({
+                    id: 'deriv_pt',
+                    latex: '(x_d, f(x_d))',
+                    color: '#4ade80',
+                    dragMode: 'X'
+                });
+
+                calculator.setExpression({
+                    id: 'tangent',
+                    latex: "y=f'(x_d)(x-x_d)+f(x_d)",
+                    color: '#4ade80',
+                    lineStyle: 'dashed'
+                });
+            }
+
+            // 3. Draggable integral bounds + shading
+            if (showInt) {
+                calculator.setExpression({ id: 'a', latex: 'a=-2' });
+                calculator.setExpression({ id: 'b', latex: 'b=4' });
+
+                calculator.setExpression({
+                    id: 'pt_a',
+                    latex: '(a, 0)',
+                    color: '#f87171',
+                    dragMode: 'X'
+                });
+                calculator.setExpression({
+                    id: 'pt_b',
+                    latex: '(b, 0)',
+                    color: '#f87171',
+                    dragMode: 'X'
+                });
+
+                // Shades the signed area between f(x) and the x-axis
+                calculator.setExpression({
+                    id: 'integral_area',
+                    latex: '\\min(f(x),0)\\le y\\le\\max(f(x),0)\\{a\\le x\\le b\\}',
+                    color: '#f87171'
+                });
+            }
+        }
+
+        document.getElementById('function-input').addEventListener('input', updateGraph);
+        document.getElementById('show-derivative').addEventListener('change', updateGraph);
+        document.getElementById('show-integral').addEventListener('change', updateGraph);
+
+        updateGraph();
+    </script>
+</body>
+</html>

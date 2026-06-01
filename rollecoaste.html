@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loop-de-Loop Physics Simulator</title>
+    <link rel="icon" type="image/png" href="assets/loop.png">
+    <style>
+        :root {
+            --bg: #181817;
+            --panel: #191b1d;
+            --panel-dark: #101112;
+            --text: #f8f5ec;
+            --ink: #f4efe5;
+            --muted: #a9a096;
+            --line: #34312d;
+            --accent: #d35435;
+            --accent-strong: #f06a49;
+            --success: #16865e;
+            --danger: #b82f34;
+            --rail: #d9d5c9;
+            --rail-dark: #8c8679;
+            --ball: #e24b37;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Inter, "Segoe UI", system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+        }
+
+        .app {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 340px;
+            min-height: 100vh;
+        }
+
+        .viewport {
+            position: relative;
+            min-width: 0;
+            min-height: 100vh;
+            background: #111210;
+        }
+
+        #scene3d {
+            position: absolute;
+            inset: 0;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            min-height: 100vh;
+            padding: 22px;
+            background: var(--panel);
+            color: var(--ink);
+            border-left: 1px solid #2a2926;
+            box-shadow: -14px 0 35px rgba(0, 0, 0, 0.3);
+            overflow-y: auto;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.28rem;
+            line-height: 1.2;
+            letter-spacing: 0;
+        }
+
+        h2 {
+            margin: 0 0 10px;
+            font-size: 0.82rem;
+            color: var(--muted);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .section {
+            padding-top: 16px;
+            border-top: 1px solid var(--line);
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+        }
+
+        label {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        .value {
+            color: var(--accent-strong);
+            white-space: nowrap;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .legend {
+            color: var(--muted);
+            font-size: 0.82rem;
+            line-height: 1.4;
+        }
+
+        .buttons {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 9px;
+        }
+
+        button {
+            min-height: 40px;
+            padding: 0 12px;
+            border: 1px solid transparent;
+            border-radius: 7px;
+            background: var(--accent);
+            color: white;
+            font-weight: 800;
+            cursor: pointer;
+            transition: background 0.18s ease, transform 0.18s ease;
+        }
+
+        button:hover {
+            background: var(--accent-strong);
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        button.secondary {
+            color: var(--ink);
+            background: #282725;
+            border-color: #45413b;
+        }
+
+        button.secondary:hover {
+            background: #34312e;
+        }
+
+        button.active {
+            background: #2b7f69;
+            border-color: #44b596;
+        }
+
+        .data-panel {
+            display: grid;
+            gap: 8px;
+            padding: 12px;
+            background: #111213;
+            border: 1px solid #34312d;
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.9rem;
+        }
+
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .data-row span {
+            color: var(--accent-strong);
+            font-weight: 800;
+        }
+
+        .status-msg {
+            padding: 11px 12px;
+            border-radius: 8px;
+            background: #262522;
+            color: var(--ink);
+            font-weight: 800;
+            text-align: center;
+        }
+
+        .status-success {
+            background: rgba(22, 134, 94, 0.14);
+            color: var(--success);
+        }
+
+        .status-fail {
+            background: rgba(184, 47, 52, 0.14);
+            color: var(--danger);
+        }
+
+        @media (max-width: 840px) {
+            body {
+                overflow: auto;
+            }
+
+            .app {
+                grid-template-columns: 1fr;
+            }
+
+            .viewport {
+                min-height: 58vh;
+            }
+
+            .controls {
+                min-height: auto;
+                border-left: 0;
+                border-top: 1px solid #2a2926;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="app">
+        <section class="viewport">
+            <div id="scene3d"></div>
+        </section>
+
+        <aside class="controls">
+            <header>
+                <h1>Loop-de-Loop Physics Simulator</h1>
+            </header>
+
+            <section class="section">
+                <h2>Simulation</h2>
+                <div class="control-group">
+                    <label for="heightSlider">
+                        Release Height
+                        <span class="value"><span id="h-val">8.00</span> m</span>
+                    </label>
+                    <input type="range" id="heightSlider" min="1" max="1200" value="1200" step="1">
+                    <div class="legend">Minimum ideal height to complete the loop: <span id="min-h-val">7.50</span> m (2.5R)</div>
+                </div>
+            </section>
+
+            <section class="buttons">
+                <button id="btnPlay">Play</button>
+                <button class="secondary" id="btnPause">Pause</button>
+                <button class="secondary" id="btnReset">Reset</button>
+                <button class="secondary" id="btnFollow">Follow</button>
+            </section>
+
+            <section class="section">
+                <h2>Telemetry</h2>
+                <div class="data-panel">
+                    <div class="data-row">Loop Radius <span><span id="out-r">3.00</span> m</span></div>
+                    <div class="data-row">Ideal Min Height <span><span id="out-min-h">7.50</span> m</span></div>
+                    <div class="data-row">Height <span><span id="out-h">8.00</span> m</span></div>
+                    <div class="data-row">Velocity <span><span id="out-v">0.00</span> m/s</span></div>
+                    <div class="data-row">Normal Force <span><span id="out-n">0.00</span> N</span></div>
+                    <div class="data-row">Centripetal Acc <span><span id="out-ac">0.00</span> m/s²</span></div>
+                    <div class="data-row">Track Progress <span><span id="out-progress">0</span>%</span></div>
+                </div>
+            </section>
+
+            <div id="statusMsg" class="status-msg">Ready to drop.</div>
+        </aside>
+    </main>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "./node_modules/three/build/three.module.js",
+                "three/addons/": "./node_modules/three/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from "three";
+        import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+        const GRAVITY = 9.81;
+        const MASS = 1;
+        const LOOP_RADIUS = 3;
+        const IDEAL_MIN_HEIGHT = 2.5 * LOOP_RADIUS;
+        const MAX_RELEASE_HEIGHT = 12;
+        const CONTACT_TOLERANCE = 0.03;
+        const TRACK_WIDTH = 0.34;
+        const RAIL_RADIUS = 0.035;
+        const BALL_RADIUS = 0.18;
+        const TRACK_SIDE = new THREE.Vector3(0, 0, 1);
+        const DEFAULT_CAMERA_POSITION = new THREE.Vector3(9.5, 7.2, 12.5);
+        const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0.3, 3.0, 0.2);
+
+        const container = document.getElementById("scene3d");
+        const slider = document.getElementById("heightSlider");
+        const hValDisplay = document.getElementById("h-val");
+        const btnPlay = document.getElementById("btnPlay");
+        const btnPause = document.getElementById("btnPause");
+        const btnReset = document.getElementById("btnReset");
+        const btnFollow = document.getElementById("btnFollow");
+        const minHValDisplay = document.getElementById("min-h-val");
+        const outR = document.getElementById("out-r");
+        const outMinH = document.getElementById("out-min-h");
+        const outH = document.getElementById("out-h");
+        const outV = document.getElementById("out-v");
+        const outN = document.getElementById("out-n");
+        const outAc = document.getElementById("out-ac");
+        const outProgress = document.getElementById("out-progress");
+        const statusMsg = document.getElementById("statusMsg");
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.setClearColor(0x111210, 1);
+        container.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x111210, 18, 34);
+
+        const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 120);
+        camera.position.copy(DEFAULT_CAMERA_POSITION);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.055;
+        controls.target.copy(DEFAULT_CAMERA_TARGET);
+        controls.minDistance = 6;
+        controls.maxDistance = 32;
+        controls.maxPolarAngle = Math.PI * 0.49;
+
+        const hemi = new THREE.HemisphereLight(0xf8efe0, 0x1d2522, 1.6);
+        scene.add(hemi);
+
+        const key = new THREE.DirectionalLight(0xffefda, 3.2);
+        key.position.set(-6, 9, 6);
+        key.castShadow = true;
+        key.shadow.mapSize.set(2048, 2048);
+        key.shadow.camera.left = -12;
+        key.shadow.camera.right = 12;
+        key.shadow.camera.top = 12;
+        key.shadow.camera.bottom = -12;
+        scene.add(key);
+
+        const fill = new THREE.DirectionalLight(0x9ab5ff, 0.85);
+        fill.position.set(5, 4, -6);
+        scene.add(fill);
+
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(34, 22),
+            new THREE.MeshStandardMaterial({ color: 0x22241f, roughness: 0.92, metalness: 0.04 })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.025;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const grid = new THREE.GridHelper(34, 34, 0x675f52, 0x39372f);
+        grid.position.y = 0.002;
+        grid.material.transparent = true;
+        grid.material.opacity = 0.45;
+        scene.add(grid);
+
+        const trackSamples = buildTrackSamples();
+        const totalTrackLength = trackSamples.at(-1).s;
+        const followEndS = totalTrackLength - 0.1;
+
+        const railMaterial = new THREE.MeshStandardMaterial({
+            color: 0xd9d5c9,
+            roughness: 0.38,
+            metalness: 0.62
+        });
+        const tieMaterial = new THREE.MeshStandardMaterial({
+            color: 0x665f52,
+            roughness: 0.72,
+            metalness: 0.16
+        });
+        const supportMaterial = new THREE.MeshStandardMaterial({
+            color: 0x4b4b43,
+            roughness: 0.64,
+            metalness: 0.32
+        });
+
+        const rails = createRails(trackSamples);
+        scene.add(rails);
+
+        minHValDisplay.textContent = IDEAL_MIN_HEIGHT.toFixed(2);
+        outR.textContent = LOOP_RADIUS.toFixed(2);
+        outMinH.textContent = IDEAL_MIN_HEIGHT.toFixed(2);
+
+        createHeightMarker(IDEAL_MIN_HEIGHT);
+        createLoopSupports(trackSamples);
+
+        const ball = new THREE.Mesh(
+            new THREE.SphereGeometry(BALL_RADIUS, 48, 32),
+            new THREE.MeshStandardMaterial({
+                color: 0xe24b37,
+                roughness: 0.32,
+                metalness: 0.12
+            })
+        );
+        ball.castShadow = true;
+        scene.add(ball);
+
+        const velocityArrow = new THREE.ArrowHelper(
+            new THREE.Vector3(1, 0, 0),
+            new THREE.Vector3(),
+            1,
+            0x3aa976,
+            0.22,
+            0.12
+        );
+        scene.add(velocityArrow);
+
+        let state = "ready";
+        let releaseHeight = MAX_RELEASE_HEIGHT;
+        let startS = 0;
+        let s = 0;
+        let speed = 0;
+        let signedSpeed = 0;
+        let currentNormalForce = 0;
+        let currentCentripetal = 0;
+        let projectilePosition = new THREE.Vector3();
+        let projectileVelocity = new THREE.Vector3();
+        let lastTime = 0;
+        let followBall = false;
+
+        initBall();
+        requestAnimationFrame(animate);
+
+        slider.addEventListener("input", (event) => {
+            releaseHeight = Number(event.target.value) / 100;
+            hValDisplay.textContent = releaseHeight.toFixed(2);
+            if (state === "ready") {
+                initBall();
+            }
+        });
+
+        btnPlay.addEventListener("click", () => {
+            if (state === "ready" || state === "finished") {
+                if (state === "finished") {
+                    initBall();
+                }
+                state = "running";
+                setStatus("Simulation running.", "");
+            }
+        });
+
+        btnPause.addEventListener("click", () => {
+            if (state === "running" || state === "projectile") {
+                state = `paused_${state}`;
+                setStatus("Paused.", "");
+            } else if (state.startsWith("paused_")) {
+                state = state.replace("paused_", "");
+                setStatus("Simulation running.", "");
+            }
+        });
+
+        btnReset.addEventListener("click", initBall);
+
+        btnFollow.addEventListener("click", () => {
+            followBall = !followBall;
+            btnFollow.classList.toggle("active", followBall);
+            btnFollow.textContent = followBall ? "Orbit" : "Follow";
+            controls.enableRotate = true;
+            controls.enablePan = !followBall;
+
+            if (!followBall) {
+                resetCameraView();
+            }
+        });
+
+        window.addEventListener("resize", resizeRenderer);
+        resizeRenderer();
+
+        function buildTrackSamples() {
+            const samples = [];
+            const push = (position, segment, theta = null) => {
+                samples.push({
+                    position,
+                    segment,
+                    theta,
+                    s: 0,
+                    tangent: new THREE.Vector3(),
+                    curvature: 0
+                });
+            };
+
+            const approach = new THREE.CubicBezierCurve3(
+                new THREE.Vector3(-12.2, 12.0, -1.3),
+                new THREE.Vector3(-10.4, 8.8, -1.3),
+                new THREE.Vector3(-4.6, 0.0, -1.3),
+                new THREE.Vector3(0.0, 0.0, -1.3)
+            );
+
+            for (let i = 0; i <= 130; i += 1) {
+                push(approach.getPoint(i / 130), "approach");
+            }
+
+            for (let i = 1; i <= 220; i += 1) {
+                const theta = (i / 220) * Math.PI * 2;
+                const t = theta / (Math.PI * 2);
+                const lateral = -1.3 + 2.6 * smoothstep(t);
+                push(new THREE.Vector3(
+                    LOOP_RADIUS * Math.sin(theta),
+                    LOOP_RADIUS * (1 - Math.cos(theta)),
+                    lateral
+                ), "loop", theta);
+            }
+
+            const followThrough = new THREE.CubicBezierCurve3(
+                new THREE.Vector3(0.0, 0.0, 1.3),
+                new THREE.Vector3(2.9, 0.0, 1.3),
+                new THREE.Vector3(7.8, 0.36, 1.58),
+                new THREE.Vector3(11.2, 1.28, 1.82)
+            );
+
+            for (let i = 1; i <= 120; i += 1) {
+                push(followThrough.getPoint(i / 120), "follow");
+            }
+
+            for (let i = 1; i < samples.length; i += 1) {
+                samples[i].s = samples[i - 1].s + samples[i].position.distanceTo(samples[i - 1].position);
+            }
+
+            for (let i = 0; i < samples.length; i += 1) {
+                const prev = samples[Math.max(0, i - 1)].position;
+                const next = samples[Math.min(samples.length - 1, i + 1)].position;
+                samples[i].tangent.copy(next).sub(prev).normalize();
+            }
+
+            for (let i = 1; i < samples.length - 1; i += 1) {
+                const ds = samples[i + 1].s - samples[i - 1].s;
+                samples[i].curvature = samples[i + 1].tangent.distanceTo(samples[i - 1].tangent) / Math.max(ds, 0.0001);
+            }
+            samples[0].curvature = samples[1].curvature;
+            samples.at(-1).curvature = samples.at(-2).curvature;
+
+            return samples;
+        }
+
+        function createRails(samples) {
+            const group = new THREE.Group();
+            const leftRailPoints = [];
+            const rightRailPoints = [];
+
+            samples.forEach((sample) => {
+                leftRailPoints.push(sample.position.clone().addScaledVector(TRACK_SIDE, TRACK_WIDTH / 2));
+                rightRailPoints.push(sample.position.clone().addScaledVector(TRACK_SIDE, -TRACK_WIDTH / 2));
+            });
+
+            const leftCurve = new THREE.CatmullRomCurve3(leftRailPoints);
+            const rightCurve = new THREE.CatmullRomCurve3(rightRailPoints);
+            const leftRail = new THREE.Mesh(new THREE.TubeGeometry(leftCurve, 560, RAIL_RADIUS, 12, false), railMaterial);
+            const rightRail = new THREE.Mesh(new THREE.TubeGeometry(rightCurve, 560, RAIL_RADIUS, 12, false), railMaterial);
+            leftRail.castShadow = true;
+            rightRail.castShadow = true;
+            group.add(leftRail, rightRail);
+
+            for (let i = 0; i < samples.length; i += 12) {
+                const tie = cylinderBetween(leftRailPoints[i], rightRailPoints[i], 0.025, tieMaterial);
+                tie.castShadow = true;
+                tie.receiveShadow = true;
+                group.add(tie);
+            }
+
+            return group;
+        }
+
+        function createLoopSupports(samples) {
+            for (let i = 0; i < samples.length; i += 38) {
+                const sample = samples[i];
+                if (sample.position.y < 0.45 || sample.segment === "follow") continue;
+                const base = new THREE.Vector3(sample.position.x, 0, sample.position.z);
+                const support = cylinderBetween(base, sample.position.clone().add(new THREE.Vector3(0, -0.08, 0)), 0.035, supportMaterial);
+                support.castShadow = true;
+                support.receiveShadow = true;
+                scene.add(support);
+            }
+        }
+
+        function createHeightMarker(height) {
+            const material = new THREE.MeshBasicMaterial({
+                color: 0x40b77a,
+                transparent: true,
+                opacity: 0.42
+            });
+            const marker = new THREE.Mesh(new THREE.PlaneGeometry(12, 0.03), material);
+            marker.position.set(-2.0, height, -2.6);
+            marker.rotation.y = Math.PI * 0.5;
+            scene.add(marker);
+        }
+
+        function initBall() {
+            releaseHeight = Number(slider.value) / 100;
+            hValDisplay.textContent = releaseHeight.toFixed(2);
+            startS = findStartDistanceForHeight(releaseHeight);
+            s = startS;
+            speed = 0;
+            signedSpeed = 0;
+            currentNormalForce = 0;
+            currentCentripetal = 0;
+            state = "ready";
+            updateBallFromTrack();
+            updateTelemetry();
+            setStatus("Ready to drop.", "");
+        }
+
+        function updatePhysics(dt) {
+            if (state === "running") {
+                const sample = sampleAtDistance(s);
+                const accelerationAlongTrack = -GRAVITY * sample.tangent.y;
+                const previousSpeed = signedSpeed;
+                const predictedSpeed = Math.max(0, previousSpeed + accelerationAlongTrack * dt);
+                s += Math.max(0, (previousSpeed + predictedSpeed) * 0.5 * dt);
+
+                const nextSample = sampleAtDistance(s);
+                const energyHeight = releaseHeight - nextSample.position.y;
+
+                if (energyHeight < -0.01 || (predictedSpeed <= 0 && accelerationAlongTrack <= 0)) {
+                    state = "finished";
+                    speed = 0;
+                    signedSpeed = 0;
+                    setStatus("Insufficient energy to climb this section.", "status-fail");
+                    return;
+                }
+
+                signedSpeed = Math.sqrt(Math.max(0, 2 * GRAVITY * Math.max(0, energyHeight)));
+                speed = signedSpeed;
+
+                currentCentripetal = nextSample.segment === "loop"
+                    ? speed * speed / LOOP_RADIUS
+                    : speed * speed * nextSample.curvature;
+                currentNormalForce = estimateNormalForce(nextSample, speed);
+
+                if (nextSample.segment === "loop" && nextSample.theta > Math.PI * 0.52 && nextSample.theta < Math.PI * 1.48 && currentNormalForce < -CONTACT_TOLERANCE) {
+                    state = "projectile";
+                    projectilePosition.copy(getBallPosition(nextSample));
+                    projectileVelocity.copy(nextSample.tangent).multiplyScalar(speed);
+                    currentNormalForce = 0;
+                    setStatus("Lost contact with the track.", "status-fail");
+                    return;
+                }
+
+                if (s >= followEndS) {
+                    s = followEndS;
+                    speed = 0;
+                    signedSpeed = 0;
+                    state = "finished";
+                    setStatus("Completed the loop and follow-through ramp.", "status-success");
+                }
+
+                updateBallFromTrack();
+            } else if (state === "projectile") {
+                projectileVelocity.y -= GRAVITY * dt;
+                projectilePosition.addScaledVector(projectileVelocity, dt);
+                ball.position.copy(projectilePosition);
+                ball.rotation.x += projectileVelocity.length() * dt;
+                speed = projectileVelocity.length();
+                signedSpeed = speed;
+                currentNormalForce = 0;
+                currentCentripetal = 0;
+                updateVelocityArrow(projectilePosition, projectileVelocity);
+
+                if (projectilePosition.y <= BALL_RADIUS) {
+                    projectilePosition.y = BALL_RADIUS;
+                    ball.position.copy(projectilePosition);
+                    state = "finished";
+                    speed = 0;
+                    signedSpeed = 0;
+                    setStatus("Landed after leaving the loop.", "status-fail");
+                }
+            }
+        }
+
+        function updateBallFromTrack() {
+            const sample = sampleAtDistance(s);
+            const position = getBallPosition(sample);
+            ball.position.copy(position);
+            ball.rotation.z -= signedSpeed * 0.035;
+            updateVelocityArrow(position, sample.tangent.clone().multiplyScalar(speed));
+        }
+
+        function getBallPosition(sample) {
+            return sample.position.clone().addScaledVector(getTrackContactNormal(sample), BALL_RADIUS + 0.03);
+        }
+
+        function getTrackContactNormal(sample) {
+            if (sample.segment === "loop" && sample.theta !== null) {
+                return new THREE.Vector3(-Math.sin(sample.theta), Math.cos(sample.theta), 0).normalize();
+            }
+            return new THREE.Vector3(0, 1, 0);
+        }
+
+        function updateVelocityArrow(origin, velocity) {
+            if (velocity.lengthSq() < 0.0001 || state === "ready" || state === "finished") {
+                velocityArrow.visible = false;
+                return;
+            }
+            velocityArrow.visible = true;
+            velocityArrow.position.copy(origin);
+            velocityArrow.setDirection(velocity.clone().normalize());
+            velocityArrow.setLength(Math.min(1.8, 0.22 + velocity.length() * 0.16), 0.22, 0.12);
+        }
+
+        function updateTelemetry() {
+            const position = state === "projectile" ? projectilePosition : sampleAtDistance(s).position;
+            outH.textContent = Math.max(0, position.y).toFixed(2);
+            outV.textContent = speed.toFixed(2);
+            outN.textContent = Math.max(0, currentNormalForce).toFixed(2);
+            outAc.textContent = currentCentripetal.toFixed(2);
+            outProgress.textContent = Math.round((Math.min(s, followEndS) / followEndS) * 100);
+        }
+
+        function updateCameraFollow() {
+            const target = ball.position.clone().add(new THREE.Vector3(0, 0.35, 0));
+            const nextTarget = controls.target.clone().lerp(target, 0.24);
+            const targetDelta = nextTarget.sub(controls.target);
+            controls.target.add(targetDelta);
+            camera.position.add(targetDelta);
+        }
+
+        function resetCameraView() {
+            camera.position.copy(DEFAULT_CAMERA_POSITION);
+            controls.target.copy(DEFAULT_CAMERA_TARGET);
+            controls.enableRotate = true;
+            controls.enablePan = true;
+            controls.update();
+        }
+
+        function animate(time) {
+            const dt = Math.min(0.033, (time - lastTime) / 1000 || 0);
+            lastTime = time;
+
+            if (!state.startsWith("paused_")) {
+                updatePhysics(dt);
+            }
+            updateTelemetry();
+            if (followBall) {
+                updateCameraFollow();
+            }
+            controls.update();
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+
+        function sampleAtDistance(distance) {
+            const clamped = THREE.MathUtils.clamp(distance, 0, totalTrackLength);
+            let low = 0;
+            let high = trackSamples.length - 1;
+
+            while (low < high) {
+                const mid = Math.floor((low + high) / 2);
+                if (trackSamples[mid].s < clamped) low = mid + 1;
+                else high = mid;
+            }
+
+            const right = Math.max(1, low);
+            const a = trackSamples[right - 1];
+            const b = trackSamples[right];
+            const span = Math.max(0.0001, b.s - a.s);
+            const t = (clamped - a.s) / span;
+            const position = a.position.clone().lerp(b.position, t);
+            const tangent = a.tangent.clone().lerp(b.tangent, t).normalize();
+            const curvature = THREE.MathUtils.lerp(a.curvature, b.curvature, t);
+            const theta = a.theta !== null && b.theta !== null ? THREE.MathUtils.lerp(a.theta, b.theta, t) : null;
+            const segment = t < 0.5 ? a.segment : b.segment;
+            return { position, tangent, curvature, theta, segment };
+        }
+
+        function estimateNormalForce(sample, velocity) {
+            if (sample.segment === "loop" && sample.theta !== null) {
+                return MASS * ((velocity * velocity / LOOP_RADIUS) + GRAVITY * Math.cos(sample.theta));
+            }
+
+            const gravityVector = new THREE.Vector3(0, -GRAVITY, 0);
+            const gravityAlongTrack = sample.tangent.clone().multiplyScalar(gravityVector.dot(sample.tangent));
+            const gravityPerpendicular = gravityVector.sub(gravityAlongTrack);
+            return MASS * gravityPerpendicular.length();
+        }
+
+        function findStartDistanceForHeight(height) {
+            for (let i = 1; i < trackSamples.length; i += 1) {
+                const prev = trackSamples[i - 1];
+                const current = trackSamples[i];
+                if (prev.segment !== "approach" || current.segment !== "approach") continue;
+                if (prev.position.y >= height && current.position.y <= height) {
+                    const t = (height - prev.position.y) / (current.position.y - prev.position.y);
+                    return THREE.MathUtils.lerp(prev.s, current.s, t);
+                }
+            }
+            return 0;
+        }
+
+        function cylinderBetween(start, end, radius, material) {
+            const direction = end.clone().sub(start);
+            const length = direction.length();
+            const geometry = new THREE.CylinderGeometry(radius, radius, length, 12);
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.copy(start).add(end).multiplyScalar(0.5);
+            mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+            return mesh;
+        }
+
+        function setStatus(message, cssClass) {
+            statusMsg.textContent = message;
+            statusMsg.className = `status-msg ${cssClass}`;
+        }
+
+        function resizeRenderer() {
+            const width = container.clientWidth || 1;
+            const height = container.clientHeight || 1;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        function smoothstep(t) {
+            return t * t * (3 - 2 * t);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Differential Swerve Simulator Pro</title>
+    <link rel="icon" type="image/png" href="assets/swerve.png">
+    <style>
+        :root {
+            --accent: #f39c12;
+            --bg: #121212;
+            --panel: rgba(25, 25, 25, 0.95);
+            --text: #eee;
+        }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            overflow: hidden;
+            display: flex;
+        }
+        #canvas-container {
+            flex-grow: 1;
+            height: 100vh;
+            cursor: move;
+        }
+        #ui-panel {
+            width: 350px;
+            background: var(--panel);
+            padding: 25px;
+            border-left: 2px solid #333;
+            box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+            z-index: 10;
+            overflow-y: auto;
+        }
+        h2 {
+            margin: 0 0 10px 0;
+            color: var(--accent);
+            font-size: 1.4rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .description {
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 25px;
+            line-height: 1.4;
+        }
+        .control-group {
+            margin-bottom: 20px;
+            background: #222;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #333;
+        }
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .input-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        input[type="range"] {
+            flex-grow: 1;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+        input[type="number"] {
+            width: 60px;
+            background: #111;
+            border: 1px solid #444;
+            color: #00ffcc;
+            padding: 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 1rem;
+        }
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .stats {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+        }
+        .stats div {
+            margin-bottom: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95rem;
+        }
+        .stats span {
+            color: #00ffcc;
+            font-weight: bold;
+            float: right;
+        }
+        .math-block {
+            margin-top: 20px;
+            font-size: 0.8rem;
+            color: #666;
+            background: #111;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        kbd {
+            background: #333;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-panel">
+        <h2>Swerve Simulator</h2>
+        <p class="description">Differential swerve uses the sum and difference of two motors to control drive and steer simultaneously.</p>
+        
+        <div class="control-group">
+            <label style="color: #ff4444;">Motor 1 (Top Gear)</label>
+            <div class="input-row">
+                <input type="range" id="m1S" min="-20" max="20" step="0.1" value="0">
+                <input type="number" id="m1N" value="0" step="0.1">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label style="color: #4444ff;">Motor 2 (Bottom Gear)</label>
+            <div class="input-row">
+                <input type="range" id="m2S" min="-20" max="20" step="0.1" value="0">
+                <input type="number" id="m2N" value="0" step="0.1">
+            </div>
+        </div>
+
+        <div class="toggle-group">
+            <input type="checkbox" id="showGears" checked>
+            <label for="showGears" style="margin-bottom: 0; cursor: pointer;">Show Gear Assembly</label>
+        </div>
+
+        <div class="stats">
+            <div>Drive Velocity: <span id="outD">0.00</span></div>
+            <div>Steer Velocity: <span id="outS">0.00</span></div>
+        </div>
+
+        <div class="math-block">
+            <b>Kinematics:</b><br>
+            V_drive = (M1 + M2) / 2<br>
+            V_steer = (M1 - M2) / 2
+        </div>
+
+        <p class="description" style="margin-top: 20px;">
+            <kbd>LMB</kbd> Rotate Camera<br>
+            <kbd>RMB</kbd> Pan<br>
+            <kbd>Scroll</kbd> Zoom
+        </p>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, (window.innerWidth - 350) / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth - 350, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Environment
+        scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x222222));
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const pointLight = new THREE.PointLight(0xffffff, 100);
+        pointLight.position.set(5, 5, 5);
+        scene.add(pointLight);
+
+        // --- COMPONENT CREATION ---
+        
+        // 1. Gear Assembly (Visual representation of motor inputs)
+        const gearGroup = new THREE.Group();
+        scene.add(gearGroup);
+
+        const createGear = (y, color) => {
+            const group = new THREE.Group();
+            const ringGeo = new THREE.TorusGeometry(0.8, 0.05, 16, 32);
+            const ringMat = new THREE.MeshPhongMaterial({ color: color });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.rotation.x = Math.PI / 2;
+            group.add(ring);
+
+            // Add teeth/notches to see rotation
+            for (let i = 0; i < 12; i++) {
+                const toothGeo = new THREE.BoxGeometry(0.1, 0.1, 0.2);
+                const tooth = new THREE.Mesh(toothGeo, ringMat);
+                const angle = (i / 12) * Math.PI * 2;
+                tooth.position.set(Math.cos(angle) * 0.8, 0, Math.sin(angle) * 0.8);
+                tooth.rotation.y = -angle;
+                group.add(tooth);
+            }
+            group.position.y = y;
+            return group;
+        };
+
+        const topGear = createGear(0.6, 0xff4444);
+        const bottomGear = createGear(0.3, 0x4444ff);
+        gearGroup.add(topGear, bottomGear);
+
+        // 2. Swerve Pod (The steering assembly)
+        const podRoot = new THREE.Group();
+        scene.add(podRoot);
+
+        // Main housing box
+        const housingGeo = new THREE.BoxGeometry(0.6, 0.8, 0.6);
+        const housingMat = new THREE.MeshPhongMaterial({ color: 0x444444, transparent: true, opacity: 0.8 });
+        const housing = new THREE.Mesh(housingGeo, housingMat);
+        housing.position.y = 1.0;
+        podRoot.add(housing);
+
+        // 3. The Wheel (The driving component)
+        const wheelRadius = 0.45;
+        const wheelWidth = 0.35;
+        const wheelGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelWidth, 32);
+        
+        // FIX: Rotate geometry so local Y-axis of cylinder becomes local X-axis (axle)
+        wheelGeo.rotateZ(Math.PI / 2);
+        
+        const wheelMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+        const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+        wheel.position.y = wheelRadius;
+
+        // Add proper treads to the wheel
+        const numTreads = 12;
+        for (let i = 0; i < numTreads; i++) {
+            const treadGeo = new THREE.BoxGeometry(wheelWidth + 0.05, 0.05, 0.1);
+            const treadMat = new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0xf39c12 : 0xffffff });
+            const tread = new THREE.Mesh(treadGeo, treadMat);
+            
+            const angle = (i / numTreads) * Math.PI * 2;
+            // Position tread relative to wheel center
+            tread.position.set(0, Math.cos(angle) * wheelRadius, Math.sin(angle) * wheelRadius);
+            tread.rotation.x = -angle;
+            wheel.add(tread);
+        }
+        podRoot.add(wheel);
+
+        // Camera setup
+        camera.position.set(3, 3, 4);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+
+        // --- LOGIC & INPUTS ---
+        const ui = {
+            m1S: document.getElementById('m1S'), m1N: document.getElementById('m1N'),
+            m2S: document.getElementById('m2S'), m2N: document.getElementById('m2N'),
+            showGears: document.getElementById('showGears'),
+            outS: document.getElementById('outS'), outD: document.getElementById('outD')
+        };
+
+        const syncInput = (src, dest) => { dest.value = src.value; };
+        ui.m1S.oninput = () => syncInput(ui.m1S, ui.m1N);
+        ui.m1N.oninput = () => syncInput(ui.m1N, ui.m1S);
+        ui.m2S.oninput = () => syncInput(ui.m2S, ui.m2N);
+        ui.m2N.oninput = () => syncInput(ui.m2N, ui.m2S);
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const m1 = parseFloat(ui.m1S.value);
+            const m2 = parseFloat(ui.m2S.value);
+
+            // 1. Gear visuals (Directly reflecting motor inputs)
+            topGear.rotation.y += m1 * 0.01;
+            bottomGear.rotation.y -= m2 * 0.01;
+            gearGroup.visible = ui.showGears.checked;
+
+            // 2. Kinematics Logic
+            // The difference between motors steers the module
+            const steerVel = (m1 - m2) * 0.005;
+            // The sum of motors drives the wheel
+            const driveVel = (m1 + m2) * 0.02;
+
+            // Apply steering to the entire root assembly
+            podRoot.rotation.y += steerVel;
+
+            // Apply drive to the wheel (local X rotation)
+            wheel.rotation.x += driveVel;
+
+            // Update UI text
+            ui.outS.innerText = (m1 - m2).toFixed(2);
+            ui.outD.innerText = (m1 + m2).toFixed(2);
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Handle Resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = (window.innerWidth - 350) / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth - 350, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

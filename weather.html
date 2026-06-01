@@ -1,0 +1,2119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Explorer</title>
+    <link rel="icon" type="image/png" href="assets/weather.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <style>
+        :root {
+            --panel: rgba(10, 15, 21, 0.78);
+            --panel-strong: rgba(8, 12, 18, 0.92);
+            --line: rgba(255, 255, 255, 0.18);
+            --text: #f6fbff;
+            --muted: #b4c4cf;
+            --accent: #77d7ff;
+            --warn: #ffc56f;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; overflow: hidden;
+            font-family: Inter, "Segoe UI", system-ui, sans-serif;
+            background: #05080c; color: var(--text);
+        }
+        canvas { display: block; }
+        #ui-container {
+            position: absolute; top: 0; right: 0; bottom: 0;
+            width: min(380px, 100vw); padding: 18px;
+            border-left: 1px solid var(--line); background: var(--panel);
+            box-shadow: -18px 0 52px rgba(0,0,0,0.34); backdrop-filter: blur(10px);
+            pointer-events: auto; user-select: none; overflow-y: auto;
+        }
+        .header { display: flex; align-items: start; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+        h1 { margin: 0; font-size: 1.08rem; line-height: 1.18; }
+        .location { margin-top: 5px; color: var(--muted); font-size: 0.84rem; line-height: 1.35; }
+        button {
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            min-height: 34px; border: 1px solid rgba(255,255,255,0.18); border-radius: 7px;
+            padding: 0 11px; background: rgba(119,215,255,0.14); color: var(--text);
+            font-weight: 800; cursor: pointer;
+        }
+        .actions { display: flex; flex-direction: column; gap: 8px; }
+        .creator-panel {
+            display: none; margin: 12px 0; padding: 12px;
+            border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: rgba(0,0,0,0.2);
+        }
+        .creator-panel.open { display: block; }
+        .creator-title {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+            color: var(--muted); font-size: 0.76rem; font-weight: 800;
+            text-transform: uppercase; letter-spacing: 0.08em;
+        }
+        .toggle-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+        .creator-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.12); }
+        .creator-section .creator-title { margin-bottom: 9px; }
+        .location-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+        .location-fields .wide { grid-column: 1 / -1; }
+        input, select {
+            width: 100%; min-height: 38px; border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 7px; padding: 0 10px; background: rgba(255,255,255,0.08);
+            color: var(--text); font: inherit; font-size: 0.86rem;
+        }
+        select option { color: #0b1118; }
+        .location-fields button { width: 100%; min-height: 38px; }
+        .effect-toggle {
+            justify-content: flex-start; min-height: 40px;
+            background: rgba(255,255,255,0.08); color: var(--muted);
+        }
+        .effect-toggle.active {
+            border-color: rgba(119,215,255,0.58); background: rgba(119,215,255,0.18); color: var(--text);
+        }
+        button:hover { background: rgba(119,215,255,0.22); }
+        .weather-grid {
+            display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; margin: 12px 0;
+        }
+        .metric {
+            min-width: 0; padding: 10px; border-radius: 8px;
+            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.08);
+        }
+        .metric b {
+            display: block; margin-bottom: 3px; font-size: 1.04rem; line-height: 1.1;
+            color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .metric span { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.06em; }
+        .control-group { padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.12); }
+        label {
+            display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px;
+            color: var(--muted); font-size: 0.86rem; font-weight: 700;
+        }
+        #timeDisplay { color: var(--text); font-variant-numeric: tabular-nums; }
+        input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+        .instructions {
+            margin-top: 12px; color: var(--muted); font-size: 0.79rem; line-height: 1.42;
+        }
+        .key {
+            display: inline-block; min-width: 20px; padding: 1px 5px; border-radius: 4px;
+            background: rgba(255,255,255,0.12); color: var(--text); text-align: center;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.75rem;
+        }
+        #status {
+            margin-top: 12px; padding: 9px 10px; border-radius: 8px;
+            background: var(--panel-strong); color: var(--muted); font-size: 0.82rem; line-height: 1.35;
+        }
+        #status.warn { color: var(--warn); }
+        #attribution {
+            position: absolute; left: 12px; bottom: 9px;
+            max-width: min(720px, calc(100vw - 410px)); padding: 6px 8px;
+            border-radius: 6px; background: rgba(0,0,0,0.45); color: rgba(255,255,255,0.78);
+            font-size: 0.7rem; line-height: 1.3; text-align: left; pointer-events: none;
+        }
+        @media (max-width: 760px) {
+            #ui-container {
+                top: 10px; right: 10px; bottom: auto; width: calc(100vw - 20px);
+                max-height: 48vh; padding: 13px; border: 1px solid var(--line); border-radius: 8px;
+            }
+            .weather-grid { grid-template-columns: repeat(4, minmax(0,1fr)); gap: 6px; }
+            .metric { padding: 8px 6px; }
+            .metric b { font-size: 0.86rem; }
+            .metric span { font-size: 0.62rem; }
+            .instructions { display: none; }
+            #attribution { left: 12px; right: 12px; max-width: none; text-align: center; }
+        }
+    </style>
+    <script src="node_modules/three/build/three.min.js"></script>
+</head>
+<body>
+    <div id="ui-container">
+        <div class="header">
+            <div>
+                <h1>Live 3D Weather</h1>
+                <div class="location" id="locationLabel">Finding your location...</div>
+            </div>
+            <div class="actions">
+                <button id="locateBtn" type="button"><i class="fa-solid fa-location-crosshairs"></i><span>Locate</span></button>
+                <button id="creatorBtn" type="button" aria-expanded="false" aria-controls="creatorPanel"><i class="fa-solid fa-sliders"></i><span>Creator</span></button>
+            </div>
+        </div>
+
+        <div class="creator-panel" id="creatorPanel">
+            <div class="creator-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Scene Toggles</span></div>
+            <div class="toggle-grid">
+                <button class="effect-toggle active" type="button" data-effect="clouds"><i class="fa-solid fa-cloud"></i><span>Clouds</span></button>
+                <button class="effect-toggle" type="button" data-effect="rain"><i class="fa-solid fa-cloud-rain"></i><span>Rain</span></button>
+                <button class="effect-toggle" type="button" data-effect="snow"><i class="fa-regular fa-snowflake"></i><span>Snow</span></button>
+                <button class="effect-toggle active" type="button" data-effect="stars"><i class="fa-solid fa-star"></i><span>Stars</span></button>
+                <button class="effect-toggle active" type="button" data-effect="mountains"><i class="fa-solid fa-mountain-sun"></i><span>Mountains</span></button>
+                <button class="effect-toggle active" type="button" data-effect="terrain"><i class="fa-solid fa-layer-group"></i><span>Terrain</span></button>
+                <button class="effect-toggle active" type="button" data-effect="buildings"><i class="fa-solid fa-city"></i><span>Buildings</span></button>
+            </div>
+            <div class="creator-section">
+                <div class="creator-title"><i class="fa-solid fa-map-location-dot"></i><span>Location</span></div>
+                <div class="location-fields">
+                    <select id="locationPreset" class="wide" aria-label="Location preset">
+                        <option value="">Custom coordinates</option>
+                        <option value="37.7022,-121.9358,Dublin CA">Dublin, CA</option>
+                        <option value="40.7128,-74.0060,New York NY">New York, NY</option>
+                        <option value="39.7392,-104.9903,Denver CO">Denver, CO</option>
+                        <option value="21.3069,-157.8583,Honolulu HI">Honolulu, HI</option>
+                        <option value="64.1466,-21.9426,Reykjavik Iceland">Reykjavik, Iceland</option>
+                        <option value="35.6762,139.6503,Tokyo Japan">Tokyo, Japan</option>
+                    </select>
+                    <input id="latInput" type="number" min="-85" max="85" step="0.0001" placeholder="Latitude">
+                    <input id="lonInput" type="number" min="-180" max="180" step="0.0001" placeholder="Longitude">
+                    <input id="locationNameInput" class="wide" type="text" maxlength="44" placeholder="Label">
+                    <button id="applyLocationBtn" class="wide" type="button"><i class="fa-solid fa-arrow-right-to-bracket"></i><span>Apply Location</span></button>
+                </div>
+            </div>
+        </div>
+
+        <div class="weather-grid">
+            <div class="metric"><b id="tempValue">-- F</b><span>Temp</span></div>
+            <div class="metric"><b id="cloudValue">--%</b><span>Clouds</span></div>
+            <div class="metric"><b id="windValue">-- mph</b><span>Wind</span></div>
+            <div class="metric"><b id="conditionValue">Loading</b><span>Now</span></div>
+        </div>
+
+        <div class="control-group">
+            <label for="timeSlider">Local Time <span id="timeDisplay">--:--</span></label>
+            <input type="range" id="timeSlider" min="0" max="23.95" step="0.05" value="12">
+            <label for="timeSpeedSlider">Auto Speed <span id="timeSpeedDisplay">Paused</span></label>
+            <input type="range" id="timeSpeedSlider" min="0" max="240" step="1" value="0">
+        </div>
+
+        <div class="instructions">
+            <span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> move,
+            <span class="key">Space</span> up, <span class="key">Shift</span> down, drag to look.
+        </div>
+
+        <div id="status">Loading satellite ground and weather.</div>
+    </div>
+
+    <div id="attribution">
+        Weather: Open-Meteo. Satellite imagery: Esri World Imagery. Elevation: Mapzen/AWS Terrarium tiles. Stars: Yale Bright Star Catalog JSON.
+    </div>
+
+    <script>
+        const DEFAULT_LOCATION = { lat: 37.7022, lon: -121.9358, label: "Dublin, CA fallback" };
+
+        const WEATHER_CODES = {
+            0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fog", 48: "Rime fog",
+            51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle", 56: "Freezing drizzle", 57: "Freezing drizzle",
+            61: "Light rain", 63: "Rain", 65: "Heavy rain", 66: "Freezing rain", 67: "Freezing rain",
+            71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
+            80: "Rain showers", 81: "Rain showers", 82: "Heavy showers",
+            85: "Snow showers", 86: "Heavy snow", 95: "Thunderstorm", 96: "Storm hail", 99: "Storm hail"
+        };
+
+        const TERRAIN_VERTICAL_SCALE = 3.1;
+        const TERRAIN_DETAIL = window.innerWidth < 720 ? 34 : 54;
+        const FAR_TERRAIN_DETAIL = window.innerWidth < 720 ? 14 : 20;
+        const TERRAIN_TILE_RADIUS = window.innerWidth < 720 ? 2 : 3;
+        const TERRAIN_KEEP_RADIUS = TERRAIN_TILE_RADIUS + 1;
+        const TERRAIN_STREAM_INTERVAL_MS = 700;
+        const TERRAIN_FALLBACK_HEIGHT_SCALE = 1.75;
+        const TERRAIN_PROCEDURAL_DETAIL_SCALE = 0.24;
+        const CAMERA_LOCATION_UPDATE_INTERVAL_MS = 2500;
+        const CAMERA_LOCATION_LOOKUP_INTERVAL_MS = 12000;
+        const CAMERA_LOCATION_LOOKUP_DISTANCE = 5000;
+        const TERRARIUM_BASE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium";
+        const REVERSE_GEOCODE_URL = "https://nominatim.openstreetmap.org/reverse";
+        const STAR_API_URL = "https://raw.githubusercontent.com/aduboisforge/Bright-Star-Catalog-JSON/master/BSC.json";
+        const STAR_RADIUS = 11300;
+        const URL_PARAMS = new URLSearchParams(window.location.search);
+
+        const FALLBACK_STARS = [
+            { name: "Sirius", ra: 101.2875, dec: -16.7161, mag: -1.46, spectral: "A1V" },
+            { name: "Canopus", ra: 95.9879, dec: -52.6957, mag: -0.74, spectral: "F0II" },
+            { name: "Arcturus", ra: 213.9153, dec: 19.1824, mag: -0.05, spectral: "K1III" },
+            { name: "Vega", ra: 279.2347, dec: 38.7837, mag: 0.03, spectral: "A0V" },
+            { name: "Capella", ra: 79.1723, dec: 45.9979, mag: 0.08, spectral: "G5III" },
+            { name: "Rigel", ra: 78.6345, dec: -8.2016, mag: 0.13, spectral: "B8I" },
+            { name: "Procyon", ra: 114.8255, dec: 5.2250, mag: 0.34, spectral: "F5IV" },
+            { name: "Betelgeuse", ra: 88.7929, dec: 7.4071, mag: 0.42, spectral: "M2I" },
+            { name: "Altair", ra: 297.6958, dec: 8.8683, mag: 0.77, spectral: "A7V" },
+            { name: "Aldebaran", ra: 68.9800, dec: 16.5093, mag: 0.86, spectral: "K5III" },
+            { name: "Spica", ra: 201.2983, dec: -11.1614, mag: 0.98, spectral: "B1V" },
+            { name: "Antares", ra: 247.3519, dec: -26.4320, mag: 1.06, spectral: "M1I" },
+            { name: "Pollux", ra: 116.3289, dec: 28.0262, mag: 1.14, spectral: "K0III" },
+            { name: "Fomalhaut", ra: 344.4128, dec: -29.6222, mag: 1.16, spectral: "A3V" },
+            { name: "Deneb", ra: 310.3579, dec: 45.2803, mag: 1.25, spectral: "A2I" },
+            { name: "Regulus", ra: 152.0929, dec: 11.9672, mag: 1.35, spectral: "B7V" },
+            { name: "Castor", ra: 113.6494, dec: 31.8883, mag: 1.58, spectral: "A1V" },
+            { name: "Bellatrix", ra: 81.2828, dec: 6.3497, mag: 1.64, spectral: "B2III" },
+            { name: "Elnath", ra: 81.5729, dec: 28.6075, mag: 1.65, spectral: "B7III" },
+            { name: "Alioth", ra: 193.5073, dec: 55.9598, mag: 1.77, spectral: "A0p" },
+            { name: "Mirfak", ra: 51.0807, dec: 49.8612, mag: 1.79, spectral: "F5Ib" },
+            { name: "Dubhe", ra: 165.9320, dec: 61.7510, mag: 1.79, spectral: "K0III" },
+            { name: "Alkaid", ra: 206.8856, dec: 49.3133, mag: 1.86, spectral: "B3V" },
+            { name: "Polaris", ra: 37.9546, dec: 89.2641, mag: 1.98, spectral: "F7Ib" }
+        ];
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x9fb6c7, 0.00008);
+
+        const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 1, 26000);
+        camera.position.set(0, 260, 920);
+        camera.rotation.order = "YXZ";
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.92;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.crossOrigin = "anonymous";
+        const cloudGeometries = {
+            puff: new THREE.SphereGeometry(1, 18, 12),
+            wisp: new THREE.SphereGeometry(1, 12, 8),
+            slab: new THREE.SphereGeometry(1, 16, 8)
+        };
+        const cloudHazeTexture = createCloudHazeTexture();
+        cloudHazeTexture.userData.shared = true;
+
+        const worldRoot = new THREE.Group();
+        const terrainGroup = new THREE.Group();
+        const buildingGroup = new THREE.Group();
+        const mountainGroup = new THREE.Group();
+        const cloudGroup = new THREE.Group();
+        const precipitationGroup = new THREE.Group();
+        worldRoot.add(terrainGroup, buildingGroup, cloudGroup, precipitationGroup);
+        scene.add(worldRoot);
+        scene.add(mountainGroup);
+
+        const skyDome = createSkyDome();
+        scene.add(skyDome);
+
+        const hemiLight = new THREE.HemisphereLight(0xaedfff, 0x29313b, 0.7);
+        scene.add(hemiLight);
+
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.1);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.set(2048, 2048);
+        sunLight.shadow.camera.near = 1;
+        sunLight.shadow.camera.far = 12000;
+        sunLight.shadow.camera.left = -3200;
+        sunLight.shadow.camera.right = 3200;
+        sunLight.shadow.camera.top = 3200;
+        sunLight.shadow.camera.bottom = -3200;
+        scene.add(sunLight);
+        scene.add(sunLight.target);
+
+        const moonLight = new THREE.DirectionalLight(0x9fb7ff, 0.08);
+        scene.add(moonLight);
+        scene.add(moonLight.target);
+
+        const celestial = createCelestialBodies();
+        scene.add(celestial.group);
+
+        const stars = createStars();
+        scene.add(stars);
+
+        const fallbackGroundTexture = createFallbackGroundTexture();
+        const groundBase = new THREE.Mesh(
+            new THREE.PlaneGeometry(32000, 32000),
+            new THREE.MeshStandardMaterial({ map: fallbackGroundTexture, roughness: 1, metalness: 0, color: 0x9aa087 })
+        );
+        groundBase.rotation.x = -Math.PI / 2;
+        groundBase.position.y = -180;
+        groundBase.receiveShadow = true;
+        terrainGroup.add(groundBase);
+
+        const state = {
+            loadToken: 0,
+            location: DEFAULT_LOCATION,
+            utcOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+            localDate: new Date().toISOString().slice(0, 10),
+            weather: fallbackWeather(),
+            effects: {
+                clouds: true, rain: false, snow: false,
+                stars: true, mountains: true, terrain: true, buildings: true
+            },
+            effectDirty: { rain: false, snow: false },
+            starCatalog: FALLBACK_STARS.slice(),
+            starCatalogLoaded: false,
+            cloudSprites: [], cloudMaterials: [],
+            buildingMaterials: [], mountainMaterials: [],
+            terrainTiles: [],
+            terrainTileMap: new Map(),
+            terrainBaseElevation: null,
+            terrainCenterTile: null,
+            terrainZoom: null,
+            terrainSeed: Math.floor(DEFAULT_LOCATION.lat * 10000) ^ Math.floor(DEFAULT_LOCATION.lon * 10000),
+            terrainBuildId: 0,
+            lastTerrainUpdate: 0,
+            precipitation: null,
+            mapCenterMercator: lonLatToMercator(DEFAULT_LOCATION.lon, DEFAULT_LOCATION.lat),
+            cameraLocation: DEFAULT_LOCATION,
+            cameraLocationLabel: DEFAULT_LOCATION.label,
+            lastCameraLocationUpdate: 0,
+            lastCameraLocationLookup: 0,
+            lastCameraLookupMercator: lonLatToMercator(DEFAULT_LOCATION.lon, DEFAULT_LOCATION.lat),
+            cameraLocationLookupToken: 0,
+            windVector: new THREE.Vector3(0.6, 0, 0.15),
+            time: 12,
+            timeSpeed: 0,
+            lastFrame: performance.now()
+        };
+
+        const ui = {
+            status: document.getElementById("status"),
+            locationLabel: document.getElementById("locationLabel"),
+            tempValue: document.getElementById("tempValue"),
+            cloudValue: document.getElementById("cloudValue"),
+            windValue: document.getElementById("windValue"),
+            conditionValue: document.getElementById("conditionValue"),
+            timeSlider: document.getElementById("timeSlider"),
+            timeDisplay: document.getElementById("timeDisplay"),
+            timeSpeedSlider: document.getElementById("timeSpeedSlider"),
+            timeSpeedDisplay: document.getElementById("timeSpeedDisplay"),
+            locateBtn: document.getElementById("locateBtn"),
+            creatorBtn: document.getElementById("creatorBtn"),
+            creatorPanel: document.getElementById("creatorPanel"),
+            locationPreset: document.getElementById("locationPreset"),
+            latInput: document.getElementById("latInput"),
+            lonInput: document.getElementById("lonInput"),
+            locationNameInput: document.getElementById("locationNameInput"),
+            applyLocationBtn: document.getElementById("applyLocationBtn"),
+            effectButtons: Array.from(document.querySelectorAll(".effect-toggle"))
+        };
+
+        const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let yaw = 0, pitch = -0.08;
+        camera.rotation.set(pitch, yaw, 0, "YXZ");
+
+        document.addEventListener("keydown", (event) => {
+            const key = event.key.toLowerCase();
+            if (Object.prototype.hasOwnProperty.call(keys, key)) keys[key] = true;
+            if (event.code === "Space") keys.space = true;
+            if (event.key === "Shift") keys.shift = true;
+        });
+        document.addEventListener("keyup", (event) => {
+            const key = event.key.toLowerCase();
+            if (Object.prototype.hasOwnProperty.call(keys, key)) keys[key] = false;
+            if (event.code === "Space") keys.space = false;
+            if (event.key === "Shift") keys.shift = false;
+        });
+        document.addEventListener("mousedown", (event) => {
+            if (event.target === renderer.domElement) {
+                isDragging = true;
+                previousMousePosition = { x: event.clientX, y: event.clientY };
+            }
+        });
+        document.addEventListener("mouseup", () => { isDragging = false; });
+        document.addEventListener("mousemove", (event) => {
+            if (!isDragging) return;
+            const deltaX = event.clientX - previousMousePosition.x;
+            const deltaY = event.clientY - previousMousePosition.y;
+            yaw -= deltaX * 0.003;
+            pitch -= deltaY * 0.003;
+            pitch = clamp(pitch, -Math.PI / 2 + 0.08, Math.PI / 2 - 0.08);
+            camera.rotation.set(pitch, yaw, 0, "YXZ");
+            previousMousePosition = { x: event.clientX, y: event.clientY };
+        });
+
+        ui.timeSlider.addEventListener("input", () => {
+            state.time = parseFloat(ui.timeSlider.value);
+            updateTimeOfDay();
+        });
+        ui.timeSpeedSlider.addEventListener("input", () => {
+            state.timeSpeed = Number(ui.timeSpeedSlider.value) || 0;
+            updateTimeSpeedDisplay();
+        });
+        ui.locateBtn.addEventListener("click", () => requestBrowserLocation(true));
+        ui.creatorBtn.addEventListener("click", () => {
+            const open = !ui.creatorPanel.classList.contains("open");
+            ui.creatorPanel.classList.toggle("open", open);
+            ui.creatorBtn.setAttribute("aria-expanded", String(open));
+        });
+
+        ui.effectButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+                const effect = button.dataset.effect;
+                if (!Object.prototype.hasOwnProperty.call(state.effects, effect)) return;
+                state.effects[effect] = !state.effects[effect];
+                if (Object.prototype.hasOwnProperty.call(state.effectDirty, effect)) {
+                    state.effectDirty[effect] = true;
+                }
+                if (effect === "rain" && state.effects.rain) {
+                    state.effects.snow = false; state.effectDirty.snow = true;
+                }
+                if (effect === "snow" && state.effects.snow) {
+                    state.effects.rain = false; state.effectDirty.rain = true;
+                }
+                applyEffectVisibility();
+                if (effect === "rain" || effect === "snow") {
+                    rebuildClouds();
+                    rebuildPrecipitation();
+                }
+                updateEffectButtons();
+                updateTimeOfDay();
+            });
+        });
+
+        ui.locationPreset.addEventListener("change", () => {
+            const location = parsePresetLocation(ui.locationPreset.value);
+            if (!location) return;
+            fillLocationInputs(location);
+        });
+
+        ui.applyLocationBtn.addEventListener("click", () => {
+            const lat = Number(ui.latInput.value);
+            const lon = Number(ui.lonInput.value);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -85 || lat > 85 || lon < -180 || lon > 180) {
+                setStatus("Enter a latitude from -85 to 85 and longitude from -180 to 180.", true);
+                return;
+            }
+            const label = ui.locationNameInput.value.trim() || "Creator location";
+            loadLocation({ lat, lon, label }, "Loading creator location.", false);
+        });
+
+        window.addEventListener("resize", () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        });
+
+        bootstrap();
+        loadStarCatalog();
+        applyUrlOverrides();
+        updateStarField();
+        updateEffectButtons();
+        updateTimeSpeedDisplay();
+        applyEffectVisibility();
+        updateSkyAnchors();
+        animate();
+
+        async function bootstrap() {
+            const urlLocation = getUrlLocation();
+            if (urlLocation) {
+                await loadLocation(urlLocation, "Loaded location from URL.", false);
+                return;
+            }
+            setStatus("Requesting browser location. If it is blocked, the scene uses Dublin, CA as a fallback.");
+            if (!navigator.geolocation) {
+                await loadLocation(DEFAULT_LOCATION, "Browser geolocation is unavailable, using fallback location.", true);
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                (position) => loadLocation({ lat: position.coords.latitude, lon: position.coords.longitude, label: "Your location" }, "Loaded from browser geolocation.", false),
+                () => loadLocation(DEFAULT_LOCATION, "Location permission was blocked or timed out, using fallback location.", true),
+                { enableHighAccuracy: false, maximumAge: 900000, timeout: 8500 }
+            );
+        }
+
+        function requestBrowserLocation(fromButton) {
+            if (!navigator.geolocation) { setStatus("Browser geolocation is unavailable here.", true); return; }
+            setStatus("Requesting location permission...");
+            navigator.geolocation.getCurrentPosition(
+                (position) => loadLocation({ lat: position.coords.latitude, lon: position.coords.longitude, label: "Your location" }, "Updated scene from browser geolocation.", false),
+                () => setStatus(fromButton ? "Location permission was not granted. Keeping the current scene." : "Using fallback location.", true),
+                { enableHighAccuracy: false, maximumAge: 300000, timeout: 9000 }
+            );
+        }
+
+        async function loadLocation(location, statusText, isFallback) {
+            const token = ++state.loadToken;
+            state.location = location;
+            state.mapCenterMercator = lonLatToMercator(location.lon, location.lat);
+            state.cameraLocation = location;
+            state.cameraLocationLabel = location.label || "Current location";
+            state.lastCameraLookupMercator = state.mapCenterMercator;
+            state.cameraLocationLookupToken++;
+            state.terrainSeed = Math.floor((location.lat + 90) * 10000) ^ Math.floor((location.lon + 180) * 10000);
+            ui.locationLabel.textContent = `${location.label} (${location.lat.toFixed(4)}, ${location.lon.toFixed(4)})`;
+            fillLocationInputs(location);
+            setStatus(statusText || "Loading location weather and satellite ground.", isFallback);
+
+            clearTerrainTiles(true);
+            terrainGroup.add(groundBase);
+            buildHorizonMountains(location.lat, location.lon);
+            buildProceduralStructures(location.lat, location.lon);
+            rebuildTerrainAround(location.lat, location.lon, token);
+
+            try {
+                const weather = await fetchWeather(location.lat, location.lon);
+                if (token !== state.loadToken) return;
+                applyWeather(weather);
+                setStatus("Live weather loaded. Satellite tiles may continue filling in as images arrive.");
+            } catch (error) {
+                if (token !== state.loadToken) return;
+                applyWeather(fallbackWeather());
+                setStatus("Live weather could not be reached, so the scene is using realistic fallback conditions.", true);
+            }
+        }
+
+        async function fetchWeather(lat, lon) {
+            const params = new URLSearchParams({
+                latitude: lat.toFixed(5), longitude: lon.toFixed(5),
+                current: "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,rain,showers,snowfall,weather_code,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day",
+                hourly: "temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation,wind_speed_10m,wind_direction_10m,weather_code",
+                daily: "sunrise,sunset",
+                temperature_unit: "fahrenheit", wind_speed_unit: "mph", precipitation_unit: "inch",
+                timezone: "auto", forecast_days: "2"
+            });
+            const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
+            if (!response.ok) throw new Error(`Weather request failed: ${response.status}`);
+            const data = await response.json();
+            const current = data.current || {};
+            return {
+                temp: valueOr(current.temperature_2m, 68),
+                apparentTemp: valueOr(current.apparent_temperature, current.temperature_2m, 68),
+                humidity: valueOr(current.relative_humidity_2m, 50),
+                code: valueOr(current.weather_code, 2),
+                cloudCover: valueOr(current.cloud_cover, 42),
+                lowClouds: valueOr(current.cloud_cover_low, current.cloud_cover, 25),
+                midClouds: valueOr(current.cloud_cover_mid, current.cloud_cover, 20),
+                highClouds: valueOr(current.cloud_cover_high, current.cloud_cover, 25),
+                windSpeed: valueOr(current.wind_speed_10m, 8),
+                windDirection: valueOr(current.wind_direction_10m, 250),
+                windGust: valueOr(current.wind_gusts_10m, current.wind_speed_10m, 10),
+                precipitation: valueOr(current.precipitation, 0) + valueOr(current.rain, 0) + valueOr(current.showers, 0),
+                snowfall: valueOr(current.snowfall, 0),
+                localTime: current.time || "",
+                localDate: extractDate(current.time) || new Date().toISOString().slice(0, 10),
+                timezone: data.timezone || "auto",
+                utcOffsetSeconds: valueOr(data.utc_offset_seconds, state.utcOffsetSeconds),
+                sunrise: data.daily?.sunrise?.[0] || "",
+                sunset: data.daily?.sunset?.[0] || ""
+            };
+        }
+
+        function applyWeather(weather) {
+            state.weather = weather;
+            state.utcOffsetSeconds = weather.utcOffsetSeconds;
+            state.localDate = weather.localDate;
+            state.time = extractHour(weather.localTime, getBrowserHour());
+            ui.timeSlider.value = state.time.toFixed(2);
+
+            const movementDirection = (weather.windDirection + 180) % 360;
+            const windRad = THREE.MathUtils.degToRad(movementDirection);
+            const driftSpeed = clamp(weather.windSpeed || 4, 1, 40) * 0.32;
+            state.windVector.set(Math.sin(windRad) * driftSpeed, 0, -Math.cos(windRad) * driftSpeed);
+
+            const autoSnow = weather.snowfall > 0.01 || [71,73,75,77,85,86].includes(weather.code);
+            const autoRain = !autoSnow && (weather.precipitation > 0.005 || [51,53,55,61,63,65,80,81,82,95,96,99].includes(weather.code));
+            if (!state.effectDirty.snow) state.effects.snow = autoSnow;
+            if (!state.effectDirty.rain) state.effects.rain = autoRain;
+            applyUrlOverrides();
+
+            updateReadout();
+            updateEffectButtons();
+            applyEffectVisibility();
+            rebuildClouds();
+            rebuildPrecipitation();
+            updateTimeOfDay();
+        }
+
+        function updateReadout() {
+            const w = state.weather;
+            ui.tempValue.textContent = `${Math.round(w.temp)} F`;
+            ui.cloudValue.textContent = `${Math.round(w.cloudCover)}%`;
+            ui.windValue.textContent = `${Math.round(w.windSpeed)} mph`;
+            ui.conditionValue.textContent = WEATHER_CODES[w.code] || "Weather";
+        }
+
+        function updateTimeSpeedDisplay() {
+            ui.timeSpeedDisplay.textContent = state.timeSpeed <= 0 ? "Paused" : `${Math.round(state.timeSpeed)} min/s`;
+        }
+
+        function updateEffectButtons() {
+            ui.effectButtons.forEach(btn => {
+                btn.classList.toggle("active", Boolean(state.effects[btn.dataset.effect]));
+                btn.setAttribute("aria-pressed", String(Boolean(state.effects[btn.dataset.effect])));
+            });
+        }
+
+        function applyEffectVisibility() {
+            cloudGroup.visible = state.effects.clouds;
+            precipitationGroup.visible = state.effects.rain || state.effects.snow;
+            stars.visible = state.effects.stars;
+            mountainGroup.visible = state.effects.mountains;
+            terrainGroup.visible = state.effects.terrain;
+            buildingGroup.visible = state.effects.buildings;
+        }
+
+        function parsePresetLocation(value) {
+            if (!value) return null;
+            const parts = value.split(",");
+            const lat = Number(parts[0]), lon = Number(parts[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+            return { lat, lon, label: parts.slice(2).join(",").trim() || "Preset location" };
+        }
+
+        function fillLocationInputs(location) {
+            ui.latInput.value = location.lat.toFixed(4);
+            ui.lonInput.value = location.lon.toFixed(4);
+            ui.locationNameInput.value = location.label || "";
+            const matchingOption = Array.from(ui.locationPreset.options).find(opt => {
+                const preset = parsePresetLocation(opt.value);
+                return preset && Math.abs(preset.lat - location.lat) < 0.0002 && Math.abs(preset.lon - location.lon) < 0.0002;
+            });
+            ui.locationPreset.value = matchingOption ? matchingOption.value : "";
+        }
+
+        function getUrlLocation() {
+            if (!URL_PARAMS.has("lat") || !URL_PARAMS.has("lon")) return null;
+            const lat = Number(URL_PARAMS.get("lat")), lon = Number(URL_PARAMS.get("lon"));
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -85 || lat > 85 || lon < -180 || lon > 180) return null;
+            return { lat, lon, label: URL_PARAMS.get("label") || "URL location" };
+        }
+
+        function applyUrlOverrides() {
+            if (URL_PARAMS.has("time")) {
+                const time = Number(URL_PARAMS.get("time"));
+                if (Number.isFinite(time)) { state.time = clamp(time, 0, 23.95); ui.timeSlider.value = state.time.toFixed(2); }
+            }
+            if (URL_PARAMS.has("speed")) {
+                const speed = Number(URL_PARAMS.get("speed"));
+                if (Number.isFinite(speed)) { state.timeSpeed = clamp(speed, 0, 240); ui.timeSpeedSlider.value = String(Math.round(state.timeSpeed)); updateTimeSpeedDisplay(); }
+            }
+            ["clouds","rain","snow","stars","mountains","terrain","buildings"].forEach(effect => {
+                if (!URL_PARAMS.has(effect)) return;
+                state.effects[effect] = URL_PARAMS.get(effect) !== "0";
+                if (Object.prototype.hasOwnProperty.call(state.effectDirty, effect)) state.effectDirty[effect] = true;
+            });
+            if (state.effects.rain && state.effects.snow) state.effects.snow = false;
+            if (URL_PARAMS.get("creator") === "1") { ui.creatorPanel.classList.add("open"); ui.creatorBtn.setAttribute("aria-expanded", "true"); }
+        }
+
+        // ----- Terrain tile management (smart streaming) -----
+        function tileKey(zoom, x, y) { return `${zoom}_${x}_${y}`; }
+
+        function clearTerrainTiles(dispose) {
+            for (const tileInfo of state.terrainTiles) {
+                if (tileInfo.mesh) {
+                    terrainGroup.remove(tileInfo.mesh);
+                    if (dispose) {
+                        tileInfo.mesh.geometry?.dispose();
+                        tileInfo.mesh.material?.dispose();
+                        tileInfo.mesh.material?.map?.dispose();
+                    }
+                }
+            }
+            state.terrainTiles = [];
+            state.terrainTileMap.clear();
+        }
+
+        function rebuildTerrainAround(lat, lon, token) {
+            clearTerrainTiles(true);
+            state.terrainZoom = window.innerWidth < 720 ? 14 : 15;
+            state.terrainBaseElevation = null;
+            const tile = lonLatToTile(lon, lat, state.terrainZoom);
+            state.terrainCenterTile = { x: Math.floor(tile.x), y: Math.floor(tile.y) };
+            updateTerrainTilesForCenter(state.terrainCenterTile.x, state.terrainCenterTile.y, token, true);
+        }
+
+        function updateTerrainTilesForCenter(centerX, centerY, token, resetBaseElevation) {
+            const zoom = state.terrainZoom;
+            const radius = TERRAIN_TILE_RADIUS;
+            const keepRadius = resetBaseElevation ? radius : TERRAIN_KEEP_RADIUS;
+            const required = new Set();
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    required.add(tileKey(zoom, centerX + dx, centerY + dy));
+                }
+            }
+
+            // Keep one extra ring so only distant chunks are recycled during travel.
+            for (const [key, tileInfo] of state.terrainTileMap) {
+                const distanceFromCenter = Math.max(Math.abs(tileInfo.tileX - centerX), Math.abs(tileInfo.tileY - centerY));
+                if (distanceFromCenter > keepRadius) {
+                    if (tileInfo.mesh) {
+                        terrainGroup.remove(tileInfo.mesh);
+                        tileInfo.mesh.geometry?.dispose();
+                        tileInfo.mesh.material?.dispose();
+                        tileInfo.mesh.material?.map?.dispose();
+                    }
+                    state.terrainTileMap.delete(key);
+                }
+            }
+
+            // Add missing tiles
+            const newTileInfos = [];
+            const missingKeys = Array.from(required).filter(key => !state.terrainTileMap.has(key));
+            missingKeys.sort((a, b) => {
+                const [, ax, ay] = a.split("_").map(Number);
+                const [, bx, by] = b.split("_").map(Number);
+                const ad = Math.max(Math.abs(ax - centerX), Math.abs(ay - centerY));
+                const bd = Math.max(Math.abs(bx - centerX), Math.abs(by - centerY));
+                return bd - ad;
+            });
+            for (const key of missingKeys) {
+                if (state.terrainTileMap.has(key)) continue;
+                const [z, tx, ty] = key.split("_").map(Number);
+                const tileInfo = createTerrainTile(tx, ty, zoom, token, resetBaseElevation && (tx === centerX && ty === centerY));
+                if (tileInfo) {
+                    state.terrainTileMap.set(key, tileInfo);
+                    newTileInfos.push(tileInfo);
+                }
+            }
+
+            state.terrainTiles = Array.from(state.terrainTileMap.values());
+
+            // Load elevation for new tiles
+            if (resetBaseElevation) {
+                const centerKey = tileKey(zoom, centerX, centerY);
+                const centerTile = state.terrainTileMap.get(centerKey);
+                if (centerTile && !centerTile.realElevationLoaded) {
+                    loadAndApplyTerrainTile(centerTile, token, true, true)
+                        .catch(() => { if (token === state.loadToken) state.terrainBaseElevation = 0; })
+                        .finally(() => {
+                            if (token !== state.loadToken) return;
+                            newTileInfos.filter(t => t !== centerTile).forEach(tile =>
+                                loadAndApplyTerrainTile(tile, token, false, false).catch(() => {})
+                            );
+                        });
+                }
+            } else {
+                newTileInfos.forEach(tile => {
+                    if (!tile.realElevationLoaded) {
+                        loadAndApplyTerrainTile(tile, token, false, false).catch(() => {});
+                    }
+                });
+            }
+        }
+
+        function manageTerrainTiles(now) {
+            if (!state.effects.terrain || !state.terrainZoom || now - state.lastTerrainUpdate < TERRAIN_STREAM_INTERVAL_MS) return;
+            state.lastTerrainUpdate = now;
+
+            const merc = {
+                x: state.mapCenterMercator.x + camera.position.x,
+                y: state.mapCenterMercator.y - camera.position.z
+            };
+            const lonLat = mercatorToLonLat(merc.x, merc.y);
+            const zoom = state.terrainZoom;
+            const tile = lonLatToTile(lonLat.lon, lonLat.lat, zoom);
+            const centerX = Math.floor(tile.x);
+            const centerY = Math.floor(tile.y);
+
+            // Check if any required tile is missing (even if center unchanged)
+            const radius = TERRAIN_TILE_RADIUS;
+            let missing = false;
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (!state.terrainTileMap.has(tileKey(zoom, centerX + dx, centerY + dy))) {
+                        missing = true;
+                        break;
+                    }
+                }
+                if (missing) break;
+            }
+
+            if (!state.terrainCenterTile || centerX !== state.terrainCenterTile.x || centerY !== state.terrainCenterTile.y || missing) {
+                state.terrainCenterTile = { x: centerX, y: centerY };
+                updateTerrainTilesForCenter(centerX, centerY, state.loadToken, false);
+            }
+        }
+
+        function createTerrainTile(tileX, tileY, zoom, token, isCenterForReset) {
+            const bounds = tileBoundsMercator(tileX, tileY, zoom);
+            const width = bounds.maxX - bounds.minX;
+            const depth = bounds.maxY - bounds.minY;
+            const ringDistance = Math.max(Math.abs(tileX - (state.terrainCenterTile?.x || 0)), Math.abs(tileY - (state.terrainCenterTile?.y || 0)));
+            const isFar = ringDistance > TERRAIN_TILE_RADIUS;
+            const segments = isFar ? FAR_TERRAIN_DETAIL : TERRAIN_DETAIL;
+            const tileSeed = tileX * 73856093 ^ tileY * 19349663 ^ zoom * 83492791;
+            const geometry = new THREE.PlaneGeometry(width, depth, segments, segments);
+            const tileInfo = {
+                tileX, tileY, zoom, bounds, width, depth, segments, isFar, seed: tileSeed, heightSeed: state.terrainSeed,
+                heights: new Float32Array((segments + 1) * (segments + 1)),
+                mesh: null, material: null, buildId: state.terrainBuildId, realElevationLoaded: false
+            };
+            applyProceduralTerrain(tileInfo, geometry);
+
+            const material = new THREE.MeshStandardMaterial({
+                map: createProceduralGroundTileTexture(tileSeed, isFar),
+                roughness: isFar ? 1 : 0.94, metalness: 0,
+                color: isFar ? 0xb3b7aa : 0xffffff, transparent: isFar, opacity: isFar ? 0.78 : 1
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.position.set(
+                (bounds.minX + bounds.maxX) * 0.5 - state.mapCenterMercator.x,
+                0,
+                state.mapCenterMercator.y - (bounds.minY + bounds.maxY) * 0.5
+            );
+            mesh.receiveShadow = true;
+            mesh.castShadow = !isFar;
+            mesh.userData.terrainTile = tileInfo;
+            tileInfo.mesh = mesh;
+            tileInfo.material = material;
+            terrainGroup.add(mesh);
+
+            // Load satellite texture
+            const url = `https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${tileY}/${tileX}`;
+            textureLoader.load(url,
+                (texture) => {
+                    if (token !== state.loadToken || tileInfo.buildId !== state.terrainBuildId) { texture.dispose(); return; }
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    texture.anisotropy = isFar ? 1 : renderer.capabilities.getMaxAnisotropy();
+                    texture.minFilter = THREE.LinearMipmapLinearFilter;
+                    texture.magFilter = THREE.LinearFilter;
+                    const softenedTexture = isFar ? createSoftenedTexture(texture.image, tileSeed) : null;
+                    mesh.material.map = softenedTexture || texture;
+                    if (softenedTexture) texture.dispose();
+                    mesh.material.color.set(isFar ? 0xc8ccc0 : 0xffffff);
+                    mesh.material.needsUpdate = true;
+                },
+                undefined,
+                () => { if (token === state.loadToken && tileInfo.buildId === state.terrainBuildId) mesh.material.color.set(isFar ? 0xa0a794 : 0x9aa087); }
+            );
+            return tileInfo;
+        }
+
+        function applyProceduralTerrain(tileInfo, geometry) {
+            const positions = geometry.attributes.position.array;
+            for (let i = 0; i < positions.length; i += 3) {
+                const localX = positions[i], localY = positions[i + 1];
+                const worldX = (tileInfo.bounds.minX + tileInfo.bounds.maxX) * 0.5 - state.mapCenterMercator.x + localX;
+                const worldZ = state.mapCenterMercator.y - (tileInfo.bounds.minY + tileInfo.bounds.maxY) * 0.5 - localY;
+                const edgeFade = tileInfo.isFar ? 0.58 : 1;
+                const height = proceduralTerrainHeight(worldX, worldZ, tileInfo.heightSeed) * TERRAIN_FALLBACK_HEIGHT_SCALE * edgeFade;
+                positions[i + 2] = height;
+                tileInfo.heights[i / 3] = height;
+            }
+            geometry.attributes.position.needsUpdate = true;
+            geometry.computeVertexNormals();
+            geometry.computeBoundingSphere();
+        }
+
+        async function loadAndApplyTerrainTile(tileInfo, token, isCenterTile, canResetBaseElevation) {
+            const imageData = await loadTerrariumImageData(tileInfo.zoom, tileInfo.tileX, tileInfo.tileY);
+            if (token !== state.loadToken || tileInfo.buildId !== state.terrainBuildId) return;
+            if ((isCenterTile && canResetBaseElevation) || state.terrainBaseElevation === null) {
+                state.terrainBaseElevation = sampleTerrariumElevation(imageData, 0.5, 0.5);
+            }
+            applyRealTerrain(tileInfo, imageData);
+            settleObjectsOnTerrain();
+        }
+
+        async function loadTerrariumImageData(zoom, tileX, tileY) {
+            const response = await fetch(`${TERRARIUM_BASE_URL}/${zoom}/${tileX}/${tileY}.png`, { mode: "cors" });
+            if (!response.ok) throw new Error(`Terrain tile failed: ${response.status}`);
+            const blob = await response.blob();
+            const bitmap = await createImageBitmap(blob);
+            const canvas = document.createElement("canvas");
+            canvas.width = bitmap.width; canvas.height = bitmap.height;
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            ctx.drawImage(bitmap, 0, 0);
+            return ctx.getImageData(0, 0, canvas.width, canvas.height);
+        }
+
+        function applyRealTerrain(tileInfo, imageData) {
+            if (!tileInfo.mesh?.geometry || state.terrainBaseElevation === null) return;
+            const geometry = tileInfo.mesh.geometry;
+            const positions = geometry.attributes.position.array;
+            const edgeScale = tileInfo.isFar ? 0.72 : 1;
+            for (let i = 0; i < positions.length; i += 3) {
+                const localX = positions[i], localY = positions[i + 1];
+                const u = clamp((localX + tileInfo.width * 0.5) / tileInfo.width, 0, 1);
+                const v = clamp((tileInfo.depth * 0.5 - localY) / tileInfo.depth, 0, 1);
+                const realElevation = sampleTerrariumElevation(imageData, u, v);
+                const proceduralDetail = proceduralTerrainHeight(
+                    tileInfo.mesh.position.x + localX, tileInfo.mesh.position.z - localY, tileInfo.heightSeed
+                ) * TERRAIN_PROCEDURAL_DETAIL_SCALE;
+                const height = ((realElevation - state.terrainBaseElevation) * TERRAIN_VERTICAL_SCALE + proceduralDetail) * edgeScale;
+                positions[i + 2] = height;
+                tileInfo.heights[i / 3] = height;
+            }
+            tileInfo.realElevationLoaded = true;
+            geometry.attributes.position.needsUpdate = true;
+            geometry.computeVertexNormals();
+            geometry.computeBoundingSphere();
+            tileInfo.material.roughness = tileInfo.isFar ? 1 : 0.88;
+            tileInfo.material.needsUpdate = true;
+        }
+
+        function sampleTerrainHeight(worldX, worldZ) {
+            for (const tileInfo of state.terrainTiles) {
+                const mesh = tileInfo.mesh;
+                if (!mesh) continue;
+                const localX = worldX - mesh.position.x;
+                const localY = mesh.position.z - worldZ;
+                if (localX < -tileInfo.width * 0.5 || localX > tileInfo.width * 0.5 || localY < -tileInfo.depth * 0.5 || localY > tileInfo.depth * 0.5) continue;
+                const u = clamp((localX + tileInfo.width * 0.5) / tileInfo.width, 0, 1);
+                const v = clamp((tileInfo.depth * 0.5 - localY) / tileInfo.depth, 0, 1);
+                const scaledX = u * tileInfo.segments, scaledY = v * tileInfo.segments;
+                const x0 = Math.floor(scaledX), y0 = Math.floor(scaledY);
+                const x1 = Math.min(tileInfo.segments, x0 + 1), y1 = Math.min(tileInfo.segments, y0 + 1);
+                const tx = scaledX - x0, ty = scaledY - y0;
+                const stride = tileInfo.segments + 1;
+                const a = tileInfo.heights[y0 * stride + x0], b = tileInfo.heights[y0 * stride + x1];
+                const c = tileInfo.heights[y1 * stride + x0], d = tileInfo.heights[y1 * stride + x1];
+                return lerp(lerp(a, b, tx), lerp(c, d, tx), ty);
+            }
+            return proceduralTerrainHeight(worldX, worldZ, state.terrainSeed) * TERRAIN_FALLBACK_HEIGHT_SCALE * 0.8;
+        }
+
+        function settleObjectsOnTerrain() {
+            buildingGroup.children.forEach(child => {
+                if (!child.userData || child.userData.groundOffset === undefined) return;
+                child.position.y = sampleTerrainHeight(child.position.x, child.position.z) + child.userData.groundOffset;
+            });
+        }
+
+        function createProceduralGroundTileTexture(seed, isFar) {
+            const size = isFar ? 96 : 192;
+            const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            const rng = seededRandom(seed);
+            ctx.fillStyle = isFar ? "#8f9682" : "#7f8c75";
+            ctx.fillRect(0, 0, size, size);
+            for (let i = 0; i < (isFar ? 32 : 90); i++) {
+                ctx.fillStyle = `rgba(${60+rng()*42}, ${72+rng()*68}, ${58+rng()*46}, ${0.08+rng()*0.16})`;
+                ctx.beginPath();
+                ctx.ellipse(rng()*size, rng()*size, 8+rng()*size*0.18, 3+rng()*size*0.08, rng()*Math.PI, 0, Math.PI*2);
+                ctx.fill();
+            }
+            ctx.lineWidth = isFar ? 1.5 : 2.5;
+            ctx.strokeStyle = isFar ? "rgba(215,219,206,0.28)" : "rgba(224,228,214,0.34)";
+            for (let i = 0; i < (isFar ? 5 : 12); i++) {
+                ctx.beginPath(); ctx.moveTo(rng()*size, rng()*size);
+                for (let j = 0; j < 4; j++) ctx.lineTo(rng()*size, rng()*size);
+                ctx.stroke();
+            }
+            if (isFar) { ctx.filter = "blur(2px)"; ctx.drawImage(canvas, 0, 0); ctx.filter = "none"; }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.anisotropy = isFar ? 1 : renderer.capabilities.getMaxAnisotropy();
+            texture.minFilter = THREE.LinearMipmapLinearFilter; texture.magFilter = THREE.LinearFilter;
+            return texture;
+        }
+
+        function createSoftenedTexture(image, seed) {
+            try {
+                const canvas = document.createElement("canvas"); canvas.width = 128; canvas.height = 128;
+                const ctx = canvas.getContext("2d");
+                ctx.filter = "blur(2.8px) saturate(0.86) brightness(0.94)";
+                ctx.drawImage(image, -7, -7, 142, 142);
+                ctx.filter = "none";
+                const rng = seededRandom(seed);
+                ctx.fillStyle = `rgba(176,184,168,${0.1+rng()*0.05})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                const texture = new THREE.CanvasTexture(canvas);
+                texture.colorSpace = THREE.SRGBColorSpace;
+                texture.minFilter = THREE.LinearMipmapLinearFilter; texture.magFilter = THREE.LinearFilter;
+                texture.anisotropy = 1;
+                return texture;
+            } catch (e) { return null; }
+        }
+
+        function proceduralTerrainHeight(worldX, worldZ, seed) {
+            const n0 = smoothNoise(worldX * 0.00036 + seed * 0.009, worldZ * 0.00034 - seed * 0.007);
+            const n1 = smoothNoise(worldX * 0.00078 + seed * 0.017, worldZ * 0.00072 - seed * 0.011);
+            const n2 = smoothNoise(worldX * 0.00185 - seed * 0.013, worldZ * 0.00145 + seed * 0.019);
+            const n3 = smoothNoise(worldX * 0.0048 + seed * 0.003, worldZ * 0.0041 - seed * 0.002);
+            const ridge = Math.pow(Math.abs(n2 * 2 - 1), 1.7);
+            return (n0 - 0.5) * 84 + (n1 - 0.5) * 56 + (ridge - 0.5) * 26 + (n3 - 0.5) * 12;
+        }
+
+        function smoothNoise(x, y) {
+            const x0 = Math.floor(x), y0 = Math.floor(y);
+            const tx = smootherstep(x - x0), ty = smootherstep(y - y0);
+            const a = hashNoise(x0, y0), b = hashNoise(x0 + 1, y0);
+            const c = hashNoise(x0, y0 + 1), d = hashNoise(x0 + 1, y0 + 1);
+            return lerp(lerp(a, b, tx), lerp(c, d, tx), ty);
+        }
+
+        function hashNoise(x, y) {
+            const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+            return v - Math.floor(v);
+        }
+
+        function buildProceduralStructures(lat, lon) {
+            clearGroup(buildingGroup, true);
+            state.buildingMaterials = [];
+            const rng = seededRandom(Math.floor((lat + 90) * 1000) ^ Math.floor((lon + 180) * 1000));
+            const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+            const count = window.innerWidth < 720 ? 120 : 230;
+            for (let i = 0; i < count; i++) {
+                const distance = Math.pow(rng(), 0.72) * 2600 + 100;
+                const angle = rng() * Math.PI * 2;
+                const width = 12 + rng() * 42, depth = 12 + rng() * 46;
+                const isTall = rng() > 0.9;
+                const height = isTall ? 55 + rng() * 145 : 5 + rng() * 36;
+                const mat = new THREE.MeshStandardMaterial({
+                    color: new THREE.Color().setHSL(0.58, 0.08, 0.22 + rng() * 0.14),
+                    roughness: 0.82, metalness: 0.02, emissive: new THREE.Color(0xffc577), emissiveIntensity: 0
+                });
+                state.buildingMaterials.push(mat);
+                const building = new THREE.Mesh(boxGeo, mat);
+                const x = Math.cos(angle) * distance, z = Math.sin(angle) * distance;
+                const groundY = sampleTerrainHeight(x, z);
+                building.scale.set(width, height, depth);
+                building.position.set(x, groundY + height * 0.5, z);
+                building.rotation.y = (Math.round(rng() * 4) * Math.PI) / 8;
+                building.castShadow = true; building.receiveShadow = true;
+                building.userData.groundOffset = height * 0.5;
+                buildingGroup.add(building);
+            }
+            const lightGeo = new THREE.SphereGeometry(1.2, 8, 8);
+            const lightMat = new THREE.MeshBasicMaterial({ color: 0xffc66e, transparent: true, opacity: 0.75 });
+            for (let i = 0; i < 180; i++) {
+                const dot = new THREE.Mesh(lightGeo, lightMat);
+                const x = (rng() - 0.5) * 4200, z = (rng() - 0.5) * 4200;
+                dot.position.set(x, sampleTerrainHeight(x, z) + 1.8, z);
+                dot.userData.isNightLight = true;
+                dot.userData.groundOffset = 1.8;
+                buildingGroup.add(dot);
+            }
+        }
+
+        function buildHorizonMountains(lat, lon) {
+            clearGroup(mountainGroup, true);
+            state.mountainMaterials = [];
+            const rng = seededRandom(Math.floor((lat + 90) * 4919) ^ Math.floor((lon + 180) * 7369));
+            const rangeCount = window.innerWidth < 720 ? 8 : 14;
+            for (let ri = 0; ri < rangeCount; ri++) {
+                const step = Math.PI * 2 / rangeCount;
+                const start = ri * step + (rng() - 0.5) * step * 0.38;
+                const arc = step * lerp(1.15, 1.7, rng());
+                const radius = lerp(9200, 11600, rng());
+                const segments = 48;
+                const baseY = -300 - rng() * 110;
+                const heightScale = lerp(780, 1550, rng()) * (ri % 3 === 0 ? 1.12 : 1);
+                const positions = [], indices = [];
+                const ridgeSeed = Math.floor(lat * 77) + ri * 31;
+                for (let i = 0; i <= segments; i++) {
+                    const t = i / segments;
+                    const angle = start + arc * (t - 0.5);
+                    const taper = Math.sin(Math.PI * t);
+                    const rolling = Math.sin(t * Math.PI * (1.35 + rng() * 0.15) + ri) * 0.12 +
+                                    Math.sin(t * Math.PI * (2.7 + rng() * 0.2) + ridgeSeed) * 0.08 +
+                                    (smoothNoise(t * 4.0 + ridgeSeed, ri * 0.7) - 0.5) * 0.12;
+                    const ridge = baseY + Math.max(90, heightScale * (0.42 + taper * 0.36 + rolling));
+                    const r = radius + Math.sin(t * Math.PI * 2 + ri) * 90;
+                    const x = Math.sin(angle) * r, z = -Math.cos(angle) * r;
+                    positions.push(x, baseY, z, x, ridge, z);
+                    if (i < segments) {
+                        const idx = i * 2;
+                        indices.push(idx, idx + 1, idx + 2, idx + 1, idx + 3, idx + 2);
+                    }
+                }
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+                geometry.setIndex(indices);
+                geometry.computeVertexNormals();
+                const material = new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(0x51616b).lerp(new THREE.Color(0x82929a), ri / rangeCount * 0.28),
+                    roughness: 1, metalness: 0, transparent: false, opacity: 1, fog: true, side: THREE.DoubleSide,
+                    depthWrite: true
+                });
+                material.userData.kind = "rock";
+                state.mountainMaterials.push(material);
+                const mountain = new THREE.Mesh(geometry, material);
+                mountain.renderOrder = -1;
+                mountainGroup.add(mountain);
+                if (heightScale > 720) {
+                    const cap = createSnowCapForMountain(positions, segments, heightScale);
+                    if (cap) mountainGroup.add(cap);
+                }
+            }
+        }
+
+        function createSnowCapForMountain(mountainPositions, segments, heightScale) {
+            const positions = [], indices = [];
+            let vertex = 0;
+            for (let i = 0; i <= segments; i++) {
+                const topIndex = i * 6 + 3;
+                const x = mountainPositions[topIndex], y = mountainPositions[topIndex + 1], z = mountainPositions[topIndex + 2];
+                if (y < heightScale * 0.56) continue;
+                positions.push(x, y - 18, z + 1, x, y + 2, z + 1);
+                if (vertex > 0) {
+                    const idx = vertex * 2;
+                    indices.push(idx - 2, idx - 1, idx, idx - 1, idx + 1, idx);
+                }
+                vertex++;
+            }
+            if (positions.length < 12) return null;
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals();
+            const material = new THREE.MeshStandardMaterial({
+                color: 0xd5dee2, roughness: 0.9, metalness: 0, transparent: false, opacity: 1, fog: true, side: THREE.DoubleSide,
+                depthWrite: true
+            });
+            material.userData.kind = "snow";
+            state.mountainMaterials.push(material);
+            return new THREE.Mesh(geometry, material);
+        }
+
+        function rebuildClouds() {
+            clearGroup(cloudGroup, true);
+            state.cloudSprites = [];
+            state.cloudMaterials = [];
+            const weather = state.weather;
+            const storm = isStormy(weather) || state.effects.rain || state.effects.snow;
+            const layers = [
+                { name: "cirro", cover: clamp(weather.highClouds, 0, 100), altitude: 5200, spread: 9600, countScale: 0.18, opacity: 0.11, speed: 0.42, builder: createCirroCloud },
+                { name: "alto", cover: clamp(weather.midClouds, 0, 100), altitude: 2700, spread: 8200, countScale: 0.26, opacity: 0.13, speed: 0.7, builder: createAltoCloud },
+                { name: "strato", cover: clamp(Math.max(weather.lowClouds * 0.45, weather.midClouds * 0.35), 0, 100), altitude: storm ? 850 : 1450, spread: 7600, countScale: 0.24, opacity: storm ? 0.22 : 0.15, speed: 0.55, builder: createStratoCloud },
+                { name: "cumulo", cover: clamp(weather.lowClouds, 0, 100), altitude: storm ? 650 : 980, spread: 6600, countScale: 0.34, opacity: storm ? 0.24 : 0.17, speed: 1, builder: createCumuloCloud },
+                { name: "nimbo", cover: storm ? clamp(Math.max(weather.lowClouds, weather.cloudCover), 32, 100) : 0, altitude: 500, spread: 6800, countScale: 0.2, opacity: 0.34, speed: 0.82, builder: createNimboCloud }
+            ];
+            const seed = Math.floor((state.location.lat + 90) * 10000) ^ Math.floor((state.location.lon + 180) * 10000) ^ Math.floor(weather.cloudCover * 31);
+            const rng = seededRandom(seed);
+            layers.forEach(layer => {
+                if (layer.cover <= 4) return;
+                const count = Math.max(layer.name === "nimbo" ? 8 : layer.cover > 8 ? 3 : 1, Math.round(layer.cover * layer.countScale));
+                for (let i = 0; i < count; i++) {
+                    const cloud = layer.builder(layer, rng);
+                    if (layer.name === "nimbo" && i === 0) {
+                        cloud.position.set(camera.position.x, 450, camera.position.z - 900);
+                    } else {
+                        cloud.position.set(
+                            camera.position.x + (rng() - 0.5) * layer.spread,
+                            layer.altitude + (rng() - 0.5) * (layer.name === "cirro" ? 1050 : 420),
+                            camera.position.z + (rng() - 0.5) * layer.spread
+                        );
+                    }
+                    cloud.rotation.y = rng() * Math.PI * 2;
+                    cloud.userData = { layer: layer.name, speed: layer.speed * (0.65 + rng() * 0.7), spread: layer.spread, tintNoise: rng() };
+                    cloudGroup.add(cloud);
+                    state.cloudSprites.push(cloud);
+                }
+            });
+            updateCloudLighting(0.4, 0);
+        }
+
+        function createCloudMaterial(layer, opacity, rng) {
+            const material = new THREE.ShaderMaterial({
+                transparent: true,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+                fog: false,
+                uniforms: {
+                    cloudColor: { value: new THREE.Color(0xffffff) },
+                    baseOpacity: { value: opacity * (0.74 + rng() * 0.22) },
+                    edgeSoftness: { value: layer.name === "cirro" ? 0.86 : 0.94 }
+                },
+                vertexShader: `
+                    varying vec3 vNormalView;
+                    varying vec3 vViewPosition;
+                    void main() {
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        vViewPosition = -mvPosition.xyz;
+                        vNormalView = normalize(normalMatrix * normal);
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 cloudColor;
+                    uniform float baseOpacity;
+                    uniform float edgeSoftness;
+                    varying vec3 vNormalView;
+                    varying vec3 vViewPosition;
+                    void main() {
+                        float facing = abs(dot(normalize(vNormalView), normalize(vViewPosition)));
+                        float body = pow(smoothstep(0.0, edgeSoftness, facing), 1.35);
+                        float alpha = baseOpacity * body;
+                        vec3 color = cloudColor;
+                        gl_FragColor = vec4(color, alpha);
+                    }
+                `
+            });
+            material.userData = { layer: layer.name, baseOpacity: material.uniforms.baseOpacity.value, tintNoise: rng(), extraDark: false };
+            state.cloudMaterials.push(material);
+            return material;
+        }
+
+        function createCloudVeilMaterial(layer, opacity, rng) {
+            const material = new THREE.SpriteMaterial({
+                map: cloudHazeTexture,
+                color: 0xffffff,
+                transparent: true,
+                opacity: opacity * (0.5 + rng() * 0.18),
+                depthWrite: false,
+                depthTest: true,
+                fog: false
+            });
+            material.userData = { layer: layer.name, baseOpacity: material.opacity, tintNoise: rng(), isCloudVeil: true, extraDark: false };
+            state.cloudMaterials.push(material);
+            return material;
+        }
+
+        function addCloudVeil(group, layer, rng, x, y, z, sx, sy, rotation) {
+            const sprite = new THREE.Sprite(createCloudVeilMaterial(layer, layer.opacity, rng));
+            sprite.position.set(x, y, z);
+            sprite.scale.set(sx, sy, 1);
+            sprite.material.rotation = rotation || 0;
+            sprite.renderOrder = 2;
+            group.add(sprite);
+            return sprite;
+        }
+
+        function addCloudPuff(group, geometry, material, x, y, z, sx, sy, sz, ry) {
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData.sharedGeometry = true;
+            mesh.position.set(x, y, z);
+            mesh.scale.set(sx, sy, sz);
+            mesh.rotation.set((Math.random() - 0.5) * 0.08, ry || 0, (Math.random() - 0.5) * 0.08);
+            mesh.castShadow = false; mesh.receiveShadow = false;
+            group.add(mesh);
+            return mesh;
+        }
+
+        function createCirroCloud(layer, rng) {
+            const group = new THREE.Group();
+            const material = createCloudMaterial(layer, layer.opacity, rng);
+            const strands = 4 + Math.floor(rng() * 6);
+            addCloudVeil(group, layer, rng, 0, 0, 0, lerp(1050, 1700, rng()), lerp(190, 320, rng()), (rng() - 0.5) * 0.8);
+            for (let i = 0; i < strands; i++) {
+                const x = (i - strands / 2) * lerp(130, 220, rng());
+                addCloudPuff(group, cloudGeometries.wisp, material,
+                    x + (rng() - 0.5) * 160, (rng() - 0.5) * 42, (rng() - 0.5) * 210,
+                    lerp(260, 560, rng()), lerp(8, 20, rng()), lerp(24, 58, rng()), (rng() - 0.5) * 0.5);
+            }
+            return group;
+        }
+
+        function createAltoCloud(layer, rng) {
+            const group = new THREE.Group();
+            const material = createCloudMaterial(layer, layer.opacity, rng);
+            const cells = 8 + Math.floor(rng() * 8);
+            addCloudVeil(group, layer, rng, 0, 0, 0, lerp(950, 1450, rng()), lerp(420, 650, rng()), rng() * Math.PI);
+            for (let i = 0; i < cells; i++) {
+                addCloudPuff(group, cloudGeometries.puff, material,
+                    (rng() - 0.5) * 780, (rng() - 0.5) * 90, (rng() - 0.5) * 480,
+                    lerp(120, 250, rng()), lerp(34, 72, rng()), lerp(100, 210, rng()), rng() * Math.PI);
+            }
+            return group;
+        }
+
+        function createStratoCloud(layer, rng) {
+            const group = new THREE.Group();
+            const material = createCloudMaterial(layer, layer.opacity, rng);
+            const sheets = 5 + Math.floor(rng() * 6);
+            addCloudVeil(group, layer, rng, 0, 8, 0, lerp(1350, 2100, rng()), lerp(420, 690, rng()), rng() * Math.PI);
+            addCloudVeil(group, layer, rng, (rng() - 0.5) * 320, -12, (rng() - 0.5) * 180, lerp(900, 1450, rng()), lerp(280, 480, rng()), rng() * Math.PI);
+            for (let i = 0; i < sheets; i++) {
+                addCloudPuff(group, cloudGeometries.slab, material,
+                    (rng() - 0.5) * 980, (rng() - 0.5) * 70 + i * 10, (rng() - 0.5) * 520,
+                    lerp(340, 760, rng()), lerp(28, 58, rng()), lerp(180, 360, rng()), rng() * Math.PI);
+            }
+            return group;
+        }
+
+        function createCumuloCloud(layer, rng) {
+            const group = new THREE.Group();
+            const material = createCloudMaterial(layer, layer.opacity, rng);
+            const puffs = 12 + Math.floor(rng() * 12);
+            addCloudVeil(group, layer, rng, 0, 105, 0, lerp(900, 1350, rng()), lerp(520, 820, rng()), rng() * Math.PI);
+            addCloudVeil(group, layer, rng, (rng() - 0.5) * 220, 40, (rng() - 0.5) * 170, lerp(620, 940, rng()), lerp(360, 560, rng()), rng() * Math.PI);
+            for (let i = 0; i < puffs; i++) {
+                const mound = Math.sin((i / puffs) * Math.PI);
+                addCloudPuff(group, cloudGeometries.puff, material,
+                    (rng() - 0.5) * 660, mound * lerp(80, 240, rng()) + (rng() - 0.5) * 50, (rng() - 0.5) * 520,
+                    lerp(110, 270, rng()), lerp(70, 170, rng()), lerp(100, 250, rng()), rng() * Math.PI);
+            }
+            return group;
+        }
+
+        function createNimboCloud(layer, rng) {
+            const group = new THREE.Group();
+            const material = createCloudMaterial(layer, layer.opacity, rng);
+            const base = createCloudMaterial(layer, layer.opacity * 1.08, rng);
+            base.userData.extraDark = true;
+            const veil = addCloudVeil(group, layer, rng, 0, 115, 0, lerp(1300, 1900, rng()), lerp(780, 1120, rng()), rng() * Math.PI);
+            veil.material.userData.extraDark = true;
+            addCloudVeil(group, layer, rng, (rng() - 0.5) * 260, -45, (rng() - 0.5) * 240, lerp(1050, 1550, rng()), lerp(440, 710, rng()), rng() * Math.PI);
+            for (let i = 0; i < 10; i++) {
+                addCloudPuff(group, cloudGeometries.slab, base,
+                    (rng() - 0.5) * 900, -50 + (rng() - 0.5) * 40, (rng() - 0.5) * 650,
+                    lerp(240, 520, rng()), lerp(62, 120, rng()), lerp(180, 400, rng()), rng() * Math.PI);
+            }
+            for (let i = 0; i < 12; i++) {
+                addCloudPuff(group, cloudGeometries.puff, material,
+                    (rng() - 0.5) * 780, lerp(80, 440, rng()), (rng() - 0.5) * 620,
+                    lerp(150, 360, rng()), lerp(110, 260, rng()), lerp(140, 330, rng()), rng() * Math.PI);
+            }
+            return group;
+        }
+
+        function rebuildPrecipitation() {
+            clearGroup(precipitationGroup, true);
+            state.precipitation = null;
+            const weather = state.weather;
+            const snowing = state.effects.snow;
+            const raining = state.effects.rain && !snowing;
+            if (!snowing && !raining) return;
+            const intensity = clamp((weather.precipitation || 0) * 80 + (weather.windGust || weather.windSpeed || 8) / 30, 0.5, 1.8);
+            const count = Math.round((snowing ? 900 : 1200) * intensity);
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * (snowing ? 3 : 6));
+            const rng = seededRandom(Math.floor(state.weather.code * 7919 + state.weather.cloudCover * 23));
+            for (let i = 0; i < count; i++) {
+                const x = camera.position.x + (rng() - 0.5) * 900;
+                const y = camera.position.y + rng() * 520 + 40;
+                const z = camera.position.z + (rng() - 0.5) * 900;
+                if (snowing) {
+                    const idx = i * 3;
+                    positions[idx] = x; positions[idx + 1] = y; positions[idx + 2] = z;
+                } else {
+                    const idx = i * 6;
+                    positions[idx] = x; positions[idx + 1] = y; positions[idx + 2] = z;
+                    positions[idx + 3] = x - state.windVector.x * 2.6;
+                    positions[idx + 4] = y - 44 - rng() * 28;
+                    positions[idx + 5] = z - state.windVector.z * 2.6;
+                }
+            }
+            geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+            const material = snowing
+                ? new THREE.PointsMaterial({ color: 0xeaf6ff, size: 3.2, transparent: true, opacity: 0.78, depthWrite: false })
+                : new THREE.LineBasicMaterial({ color: 0x9fc5e8, transparent: true, opacity: 0.5, depthWrite: false });
+            const object = snowing ? new THREE.Points(geometry, material) : new THREE.LineSegments(geometry, material);
+            object.userData = { snowing, count, rng };
+            object.frustumCulled = false;
+            object.renderOrder = 5;
+            geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 24000);
+            precipitationGroup.add(object);
+            precipitationGroup.renderOrder = 1; // render after clouds
+            state.precipitation = object;
+        }
+
+        function updateTimeOfDay() {
+            const hour = state.time;
+            ui.timeDisplay.textContent = formatHour(hour);
+            const sunInfo = solarPosition(state.localDate, hour, state.location.lat, state.location.lon, state.utcOffsetSeconds);
+            const moonPhase = lunarPhase(state.localDate);
+            const moonHour = (hour - moonPhase * 24 + 48) % 24;
+            const moonInfo = solarPosition(state.localDate, moonHour, state.location.lat, state.location.lon, state.utcOffsetSeconds);
+            const radius = 9600;
+            const sunPos = celestialToVector(sunInfo.azimuth, sunInfo.elevation, radius);
+            const moonPos = celestialToVector(moonInfo.azimuth, moonInfo.elevation, radius * 0.92);
+            celestial.sunDisk.position.copy(sunPos);
+            celestial.sunGlow.position.copy(sunPos);
+            celestial.moon.position.copy(moonPos);
+            celestial.moonGlow.position.copy(moonPos);
+            sunLight.position.copy(camera.position).add(sunPos);
+            sunLight.target.position.copy(camera.position);
+            moonLight.position.copy(camera.position).add(moonPos);
+            moonLight.target.position.copy(camera.position);
+
+            const dayFactor = THREE.MathUtils.smoothstep(sunInfo.elevation, -0.08, 0.22);
+            const nightFactor = 1 - THREE.MathUtils.smoothstep(sunInfo.elevation, -0.18, 0.04);
+            const twilightFactor = Math.max(0, 1 - Math.abs(sunInfo.elevation) / 0.22);
+            const stormFactor = isStormy(state.weather) ? 0.22 : 0;
+            const cloudFactor = clamp(state.weather.cloudCover / 100, 0, 1);
+
+            const top = new THREE.Color(0x11182b).lerp(new THREE.Color(0x4b97d8), dayFactor);
+            const horizon = new THREE.Color(0x172139).lerp(new THREE.Color(0xb9d7e6), dayFactor)
+                .lerp(new THREE.Color(sunInfo.elevation > 0 ? 0xffb47d : 0xfd745d), twilightFactor * 0.62);
+            const ground = new THREE.Color(0x11151b).lerp(new THREE.Color(0x9db2bd), dayFactor * 0.75);
+            skyDome.material.uniforms.topColor.value.copy(top);
+            skyDome.material.uniforms.horizonColor.value.copy(horizon);
+            skyDome.material.uniforms.groundColor.value.copy(ground);
+            skyDome.material.uniforms.sunDirection.value.copy(sunPos.clone().normalize());
+            skyDome.material.uniforms.sunsetStrength.value = twilightFactor;
+            skyDome.material.uniforms.dayStrength.value = dayFactor;
+
+            scene.fog.color.copy(horizon);
+            scene.fog.density = 0.000045 + cloudFactor * 0.000055 + stormFactor * 0.00008 + nightFactor * 0.000025;
+            renderer.toneMappingExposure = 0.58 + dayFactor * 0.45 + twilightFactor * 0.08 - stormFactor * 0.18;
+            sunLight.intensity = Math.max(0, dayFactor * (1.15 - cloudFactor * 0.42));
+            hemiLight.intensity = 0.18 + dayFactor * 0.58 + twilightFactor * 0.12;
+            moonLight.intensity = Math.max(0, nightFactor * 0.18 * THREE.MathUtils.smoothstep(moonInfo.elevation, -0.05, 0.12));
+
+            celestial.sunDisk.material.opacity = THREE.MathUtils.smoothstep(sunInfo.elevation, -0.08, 0.03) * (1 - stormFactor * 0.6);
+            celestial.sunGlow.material.opacity = THREE.MathUtils.smoothstep(sunInfo.elevation, -0.1, 0.04) * (0.42 - cloudFactor * 0.2);
+            if (celestial.currentMoonPhaseKey !== moonPhase.toFixed(3)) {
+                celestial.moon.material.map.dispose();
+                celestial.moon.material.map = createMoonTexture(moonPhase);
+                celestial.currentMoonPhaseKey = moonPhase.toFixed(3);
+            }
+            const moonVisibility = THREE.MathUtils.smoothstep(moonInfo.elevation, -0.04, 0.08);
+            celestial.moon.material.opacity = clamp(moonVisibility * (1.05 - dayFactor * 0.25), 0, 1);
+            celestial.moonGlow.material.opacity = moonVisibility * clamp(0.36 - dayFactor * 0.15 - cloudFactor * 0.08, 0.08, 0.36);
+            updateStarField();
+            stars.material.uniforms.globalOpacity.value = state.effects.stars ? clamp(nightFactor * (1 - cloudFactor * 0.62), 0, 0.92) : 0;
+            updateCloudLighting(dayFactor, twilightFactor);
+            updateNightLights(dayFactor);
+            updateMountainLighting(dayFactor, twilightFactor, nightFactor);
+            updateSkyAnchors();
+        }
+
+        function updateCloudLighting(dayFactor, twilightFactor) {
+            const weather = state.weather;
+            const storm = isStormy(weather) || state.effects.rain || state.effects.snow;
+            const nightFactor = 1 - dayFactor;
+            const stormColor = new THREE.Color(storm ? 0x5f6671 : 0xc7d0d8);
+            const dayWhite = new THREE.Color(0xf7f8f4);
+            const sunsetWarm = new THREE.Color(0xffb284);
+            const nightBlue = new THREE.Color(0x273047);
+            state.cloudMaterials.forEach(material => {
+                const layer = material.userData.layer;
+                const layerWeight = layer === "nimbo" ? 0.46 : layer === "cumulo" ? 0.28 : layer === "strato" ? 0.24 : layer === "alto" ? 0.15 : 0.04;
+                const color = dayWhite.clone()
+                    .lerp(stormColor, layerWeight + (weather.cloudCover / 100) * 0.28 + (storm ? 0.32 : 0))
+                    .lerp(sunsetWarm, twilightFactor * 0.15)  // reduced sunset
+                    .lerp(nightBlue, nightFactor * 0.3);      // reduced night
+                if (material.userData.extraDark) color.lerp(new THREE.Color(0x59606a), 0.36);
+                const lightOpacity = material.userData.baseOpacity * (0.78 + dayFactor * 0.16 + nightFactor * 0.08 + (storm ? 0.08 : 0));
+                if (material.uniforms?.cloudColor) {
+                    material.uniforms.cloudColor.value.copy(color);
+                    material.uniforms.baseOpacity.value = lightOpacity;
+                } else {
+                    material.color.copy(color);
+                    material.opacity = lightOpacity * (material.userData.isCloudVeil ? 0.92 : 1);
+                }
+            });
+        }
+
+        function updateNightLights(dayFactor) {
+            const nightGlow = clamp(1 - dayFactor * 1.25, 0, 1);
+            state.buildingMaterials.forEach((mat, i) => mat.emissiveIntensity = nightGlow * (0.06 + (i % 7) * 0.018));
+            buildingGroup.children.forEach(child => { if (child.userData.isNightLight) child.visible = nightGlow > 0.08; });
+        }
+
+        function updateMountainLighting(dayFactor, twilightFactor, nightFactor) {
+            const dayRock = new THREE.Color(0x6f7f82);
+            const dawnRock = new THREE.Color(0xaa7c68);
+            const nightRock = new THREE.Color(0x1d2430);
+            const daySnow = new THREE.Color(0xdce8ed);
+            const duskSnow = new THREE.Color(0xf0c3ab);
+            const nightSnow = new THREE.Color(0x455066);
+            state.mountainMaterials.forEach((mat, i) => {
+                const isSnow = mat.userData.kind === "snow";
+                const color = isSnow
+                    ? daySnow.clone().lerp(duskSnow, twilightFactor * 0.42).lerp(nightSnow, nightFactor * 0.7)
+                    : dayRock.clone().lerp(dawnRock, twilightFactor * 0.5).lerp(nightRock, nightFactor * 0.78);
+                if (!isSnow && i % 3 === 1) color.lerp(new THREE.Color(0x8d9998), dayFactor * 0.16);
+                mat.color.copy(color);
+                mat.transparent = false;
+                mat.depthWrite = true;
+                mat.opacity = 1;
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const now = performance.now();
+            const dt = Math.min((now - state.lastFrame) / 1000, 0.05);
+            state.lastFrame = now;
+            advanceTime(dt);
+            updateMovement(dt);
+            manageTerrainTiles(now);
+            updateCameraLocation(now);
+            animateClouds(dt);
+            animatePrecipitation(dt);
+            updateBackdropMountains();
+            updateSkyAnchors();
+            renderer.render(scene, camera);
+        }
+
+        function advanceTime(dt) {
+            if (state.timeSpeed <= 0) return;
+            const nextTime = state.time + (state.timeSpeed * dt) / 60;
+            state.time = nextTime >= 24 ? nextTime % 24 : nextTime;
+            ui.timeSlider.value = state.time.toFixed(2);
+            updateTimeOfDay();
+        }
+
+        function updateMovement(dt) {
+            const speed = (keys.shift ? 210 : 340) * dt * (1 + clamp(camera.position.y / 1800, 0, 1.5));
+            if (keys.w) camera.translateZ(-speed);
+            if (keys.s) camera.translateZ(speed);
+            if (keys.a) camera.translateX(-speed);
+            if (keys.d) camera.translateX(speed);
+            if (keys.space) camera.position.y += speed;
+            if (keys.shift) camera.position.y -= speed;
+            const groundY = sampleTerrainHeight(camera.position.x, camera.position.z);
+            camera.position.y = clamp(camera.position.y, groundY + 8, 6500);
+        }
+
+        function getCameraMercator() {
+            return {
+                x: state.mapCenterMercator.x + camera.position.x,
+                y: state.mapCenterMercator.y - camera.position.z
+            };
+        }
+
+        function getCameraLonLat() {
+            const merc = getCameraMercator();
+            return mercatorToLonLat(merc.x, merc.y);
+        }
+
+        function updateCameraLocation(now) {
+            if (now - state.lastCameraLocationUpdate < CAMERA_LOCATION_UPDATE_INTERVAL_MS) return;
+            state.lastCameraLocationUpdate = now;
+
+            const merc = getCameraMercator();
+            const lonLat = mercatorToLonLat(merc.x, merc.y);
+            state.cameraLocation = {
+                lat: lonLat.lat,
+                lon: lonLat.lon,
+                label: state.cameraLocationLabel || "Camera location"
+            };
+            updateCameraLocationLabel();
+
+            const movedSinceLookup = Math.hypot(
+                merc.x - state.lastCameraLookupMercator.x,
+                merc.y - state.lastCameraLookupMercator.y
+            );
+            if (movedSinceLookup < CAMERA_LOCATION_LOOKUP_DISTANCE || now - state.lastCameraLocationLookup < CAMERA_LOCATION_LOOKUP_INTERVAL_MS) return;
+
+            state.lastCameraLocationLookup = now;
+            state.lastCameraLookupMercator = merc;
+            lookupCameraLocationName(lonLat);
+        }
+
+        function updateCameraLocationLabel() {
+            const loc = state.cameraLocation;
+            ui.locationLabel.textContent = `${state.cameraLocationLabel || loc.label || "Camera location"} (${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)})`;
+        }
+
+        async function lookupCameraLocationName(lonLat) {
+            const token = ++state.cameraLocationLookupToken;
+            const params = new URLSearchParams({
+                format: "jsonv2",
+                lat: lonLat.lat.toFixed(5),
+                lon: lonLat.lon.toFixed(5),
+                zoom: "10",
+                addressdetails: "1"
+            });
+            try {
+                const response = await fetch(`${REVERSE_GEOCODE_URL}?${params.toString()}`, { mode: "cors" });
+                if (!response.ok) throw new Error(`Reverse geocode failed: ${response.status}`);
+                const data = await response.json();
+                if (token !== state.cameraLocationLookupToken) return;
+                const label = reverseGeocodeLabel(data);
+                state.cameraLocationLabel = label || "Open terrain";
+                state.cameraLocation = { lat: lonLat.lat, lon: lonLat.lon, label: state.cameraLocationLabel };
+                updateCameraLocationLabel();
+            } catch (error) {
+                if (token !== state.cameraLocationLookupToken) return;
+                state.cameraLocationLabel = "Camera location";
+                state.cameraLocation = { lat: lonLat.lat, lon: lonLat.lon, label: state.cameraLocationLabel };
+                updateCameraLocationLabel();
+            }
+        }
+
+        function reverseGeocodeLabel(data) {
+            const address = data?.address || {};
+            const city = address.city || address.town || address.village || address.hamlet || address.municipality || address.suburb;
+            const region = address.state || address.region || address.county;
+            const country = address.country;
+            if (city && region) return `${city}, ${region}`;
+            if (city) return country ? `${city}, ${country}` : city;
+            if (region) return country ? `${region}, ${country}` : region;
+            return typeof data?.name === "string" && data.name.trim() ? data.name.trim() : "";
+        }
+
+        function updateBackdropMountains() {
+            mountainGroup.position.x = camera.position.x;
+            mountainGroup.position.z = camera.position.z;
+        }
+
+        function updateSkyAnchors() {
+            skyDome.position.copy(camera.position);
+            celestial.group.position.copy(camera.position);
+            stars.position.copy(camera.position);
+        }
+
+        function animateClouds(dt) {
+            state.cloudSprites.forEach(sprite => {
+                sprite.position.x += state.windVector.x * sprite.userData.speed * dt * 9;
+                sprite.position.z += state.windVector.z * sprite.userData.speed * dt * 9;
+                const limit = sprite.userData.spread * 0.55;
+                const dx = sprite.position.x - camera.position.x;
+                const dz = sprite.position.z - camera.position.z;
+                if (dx > limit) sprite.position.x = camera.position.x - limit;
+                if (dx < -limit) sprite.position.x = camera.position.x + limit;
+                if (dz > limit) sprite.position.z = camera.position.z - limit;
+                if (dz < -limit) sprite.position.z = camera.position.z + limit;
+            });
+        }
+
+        function animatePrecipitation(dt) {
+            if (!state.precipitation) return;
+            const obj = state.precipitation;
+            const positions = obj.geometry.attributes.position.array;
+            const snowing = obj.userData.snowing;
+            const count = obj.userData.count;
+            const rng = obj.userData.rng;
+            const fallSpeed = snowing ? 52 : 520;
+            const driftX = state.windVector.x * dt * (snowing ? 9 : 4);
+            const driftZ = state.windVector.z * dt * (snowing ? 9 : 4);
+            for (let i = 0; i < count; i++) {
+                if (snowing) {
+                    const idx = i * 3;
+                    positions[idx] += driftX + Math.sin(performance.now() * 0.001 + i) * dt * 8;
+                    positions[idx + 1] -= fallSpeed * dt * (0.55 + rng() * 0.35);
+                    positions[idx + 2] += driftZ;
+                    if (positions[idx + 1] < camera.position.y - 120 || Math.abs(positions[idx] - camera.position.x) > 520 || Math.abs(positions[idx + 2] - camera.position.z) > 520) {
+                        positions[idx] = camera.position.x + (rng() - 0.5) * 900;
+                        positions[idx + 1] = camera.position.y + 300 + rng() * 280;
+                        positions[idx + 2] = camera.position.z + (rng() - 0.5) * 900;
+                    }
+                } else {
+                    const idx = i * 6;
+                    positions[idx] += driftX; positions[idx + 1] -= fallSpeed * dt; positions[idx + 2] += driftZ;
+                    positions[idx + 3] += driftX; positions[idx + 4] -= fallSpeed * dt; positions[idx + 5] += driftZ;
+                    if (positions[idx + 4] < camera.position.y - 160 || Math.abs(positions[idx] - camera.position.x) > 520 || Math.abs(positions[idx + 2] - camera.position.z) > 520) {
+                        const x = camera.position.x + (rng() - 0.5) * 900;
+                        const y = camera.position.y + 260 + rng() * 340;
+                        const z = camera.position.z + (rng() - 0.5) * 900;
+                        positions[idx] = x; positions[idx + 1] = y; positions[idx + 2] = z;
+                        positions[idx + 3] = x - state.windVector.x * 2.6;
+                        positions[idx + 4] = y - 48 - rng() * 24;
+                        positions[idx + 5] = z - state.windVector.z * 2.6;
+                    }
+                }
+            }
+            obj.geometry.attributes.position.needsUpdate = true;
+        }
+
+        // ---------- Sky, stars, celestial, utilities ----------
+        function createSkyDome() {
+            const geometry = new THREE.SphereGeometry(12000, 48, 24);
+            const material = new THREE.ShaderMaterial({
+                side: THREE.BackSide, depthWrite: false,
+                uniforms: {
+                    topColor: { value: new THREE.Color(0x4b97d8) },
+                    horizonColor: { value: new THREE.Color(0xb9d7e6) },
+                    groundColor: { value: new THREE.Color(0x82919a) },
+                    sunDirection: { value: new THREE.Vector3(0, 1, 0) },
+                    sunsetStrength: { value: 0 },
+                    dayStrength: { value: 1 }
+                },
+                vertexShader: `
+                    varying vec3 vLocalPosition;
+                    void main() {
+                        vLocalPosition = position;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vLocalPosition;
+                    uniform vec3 topColor, horizonColor, groundColor, sunDirection;
+                    uniform float sunsetStrength, dayStrength;
+                    void main() {
+                        vec3 dir = normalize(vLocalPosition);
+                        float height = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+                        vec3 sky = mix(groundColor, horizonColor, smoothstep(0.0, 0.5, height));
+                        sky = mix(sky, topColor, pow(max(dir.y, 0.0), 0.72));
+                        float sunDot = max(dot(dir, normalize(sunDirection)), 0.0);
+                        float glow = pow(sunDot, 42.0) * (0.35 + dayStrength * 0.45);
+                        float lowGlow = pow(sunDot, 6.0) * sunsetStrength * 0.45;
+                        vec3 warm = vec3(1.0, 0.42, 0.22);
+                        sky += warm * lowGlow + vec3(1.0, 0.82, 0.48) * glow;
+                        gl_FragColor = vec4(sky, 1.0);
+                    }
+                `
+            });
+            return new THREE.Mesh(geometry, material);
+        }
+
+        function createCelestialBodies() {
+            const group = new THREE.Group();
+            const sunDisk = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: createRadialTexture(["rgba(255,248,211,1)","rgba(255,215,135,0.9)","rgba(255,150,90,0)"], 256),
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 1
+            }));
+            sunDisk.scale.set(520, 520, 1);
+            const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: createRadialTexture(["rgba(255,211,125,0.38)","rgba(255,133,85,0.16)","rgba(255,133,85,0)"], 512),
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.4
+            }));
+            sunGlow.scale.set(1900, 1900, 1);
+            const moonGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: createRadialTexture(["rgba(198,218,255,0.34)","rgba(152,184,255,0.13)","rgba(152,184,255,0)"], 512),
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.25
+            }));
+            moonGlow.scale.set(980, 980, 1);
+            const moon = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: createMoonTexture(lunarPhase(new Date().toISOString().slice(0,10))),
+                transparent: true, depthWrite: false, opacity: 0.9
+            }));
+            moon.scale.set(360, 360, 1);
+            group.add(sunGlow, sunDisk, moonGlow, moon);
+            return { group, sunDisk, sunGlow, moonGlow, moon, currentMoonPhaseKey: "" };
+        }
+
+        function createStars() {
+            const geometry = new THREE.BufferGeometry();
+            const count = FALLBACK_STARS.length;
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            const sizes = new Float32Array(count);
+            for (let i = 0; i < count; i++) {
+                positions[i*3] = 0; positions[i*3+1] = -STAR_RADIUS; positions[i*3+2] = 0;
+                const col = starColor(FALLBACK_STARS[i].spectral);
+                colors[i*3] = col.r; colors[i*3+1] = col.g; colors[i*3+2] = col.b;
+                sizes[i] = starSize(FALLBACK_STARS[i].mag);
+            }
+            geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute("starSize", new THREE.BufferAttribute(sizes, 1));
+            const material = new THREE.ShaderMaterial({
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+                uniforms: { globalOpacity: { value: 0 } },
+                vertexShader: `attribute float starSize; attribute vec3 color; varying vec3 vColor;
+                    void main() {
+                        vColor = color;
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        gl_PointSize = starSize * (7600.0 / max(1200.0, -mvPosition.z));
+                        gl_Position = projectionMatrix * mvPosition;
+                    }`,
+                fragmentShader: `uniform float globalOpacity; varying vec3 vColor;
+                    void main() {
+                        float dist = length(gl_PointCoord - vec2(0.5));
+                        if (dist > 0.5) discard;
+                        float alpha = (1.0 - smoothstep(0.16, 0.5, dist)) * globalOpacity;
+                        gl_FragColor = vec4(vColor, alpha);
+                    }`
+            });
+            return new THREE.Points(geometry, material);
+        }
+
+        async function loadStarCatalog() {
+            try {
+                const resp = await fetch(STAR_API_URL, { mode: "cors" });
+                if (!resp.ok) throw new Error(`Star catalog failed: ${resp.status}`);
+                const data = await resp.json();
+                const catalog = data.map(normalizeCatalogStar).filter(s => s && s.mag <= 6.2)
+                    .sort((a,b) => a.mag - b.mag).slice(0, window.innerWidth < 720 ? 1800 : 4200);
+                if (!catalog.length) throw new Error("No usable stars");
+                state.starCatalog = catalog;
+                state.starCatalogLoaded = true;
+                applyStarCatalog(catalog);
+                updateTimeOfDay();
+            } catch (e) {
+                state.starCatalog = FALLBACK_STARS.slice();
+                state.starCatalogLoaded = false;
+                applyStarCatalog(state.starCatalog);
+                updateTimeOfDay();
+            }
+        }
+
+        function normalizeCatalogStar(row) {
+            const ra = parseRightAscension(row.RA || row.ra || row.rightAscension);
+            const dec = parseDeclination(row.DEC || row.dec || row.declination);
+            const mag = Number(row.MAG || row.mag || row.magnitude);
+            if (!Number.isFinite(ra) || !Number.isFinite(dec) || !Number.isFinite(mag)) return null;
+            return { name: row.Name || row.name || row.HR || "", ra, dec, mag, spectral: row["Title HD"] || row.SPECT || row.spectral || "" };
+        }
+
+        function applyStarCatalog(catalog) {
+            const positions = new Float32Array(catalog.length * 3);
+            const colors = new Float32Array(catalog.length * 3);
+            const sizes = new Float32Array(catalog.length);
+            catalog.forEach((star, i) => {
+                positions[i*3] = 0; positions[i*3+1] = -STAR_RADIUS; positions[i*3+2] = 0;
+                const col = starColor(star.spectral);
+                const bright = clamp(1.15 - (star.mag + 1.5) / 8.2, 0.32, 1.18);
+                colors[i*3] = col.r * bright; colors[i*3+1] = col.g * bright; colors[i*3+2] = col.b * bright;
+                sizes[i] = starSize(star.mag);
+            });
+            stars.geometry.dispose();
+            stars.geometry = new THREE.BufferGeometry();
+            stars.geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+            stars.geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+            stars.geometry.setAttribute("starSize", new THREE.BufferAttribute(sizes, 1));
+            updateStarField();
+        }
+
+        function updateStarField() {
+            if (!stars.geometry?.attributes.position) return;
+            const catalog = state.starCatalog;
+            const positions = stars.geometry.attributes.position.array;
+            if (positions.length !== catalog.length * 3) return;
+            const latRad = THREE.MathUtils.degToRad(state.location.lat);
+            const lst = localSiderealRadians(state.localDate, state.time, state.location.lon, state.utcOffsetSeconds);
+            for (let i = 0; i < catalog.length; i++) {
+                const star = catalog[i];
+                const ra = THREE.MathUtils.degToRad(star.ra), dec = THREE.MathUtils.degToRad(star.dec);
+                const hourAngle = normalizeRadians(lst - ra);
+                const sinAlt = Math.sin(dec) * Math.sin(latRad) + Math.cos(dec) * Math.cos(latRad) * Math.cos(hourAngle);
+                const altitude = Math.asin(clamp(sinAlt, -1, 1));
+                const idx = i * 3;
+                if (altitude < -0.035) {
+                    positions[idx] = 0; positions[idx+1] = -STAR_RADIUS; positions[idx+2] = 0;
+                    continue;
+                }
+                const azimuth = Math.atan2(
+                    Math.sin(hourAngle),
+                    Math.cos(hourAngle) * Math.sin(latRad) - Math.tan(dec) * Math.cos(latRad)
+                ) + Math.PI;
+                const r = STAR_RADIUS + clamp(6.4 - star.mag, 0, 8) * 34;
+                const vec = celestialToVector(azimuth, altitude, r);
+                positions[idx] = vec.x; positions[idx+1] = vec.y; positions[idx+2] = vec.z;
+            }
+            stars.geometry.attributes.position.needsUpdate = true;
+            stars.geometry.computeBoundingSphere();
+        }
+
+        function parseRightAscension(value) {
+            if (Number.isFinite(value)) return value > 24 ? value : value * 15;
+            if (typeof value !== "string") return NaN;
+            const parts = value.trim().split(/[ :hms]+/).filter(Boolean).map(Number);
+            if (!parts.length || parts.some(p => !Number.isFinite(p))) return NaN;
+            return ((parts[0]||0) + (parts[1]||0)/60 + (parts[2]||0)/3600) * 15;
+        }
+
+        function parseDeclination(value) {
+            if (Number.isFinite(value)) return value;
+            if (typeof value !== "string") return NaN;
+            const sign = value.trim().startsWith("-") ? -1 : 1;
+            const parts = value.trim().replace(/^[+-]/, "").split(/[ :dms]+/).filter(Boolean).map(Number);
+            if (!parts.length || parts.some(p => !Number.isFinite(p))) return NaN;
+            return sign * ((parts[0]||0) + (parts[1]||0)/60 + (parts[2]||0)/3600);
+        }
+
+        function starColor(spectral) {
+            const t = String(spectral||"").trim().charAt(0).toUpperCase();
+            const map = { O:0xaec9ff, B:0xc4d8ff, A:0xe6edff, F:0xfff4d8, G:0xffdf9f, K:0xffb66f, M:0xff8a5c };
+            return new THREE.Color(map[t] || 0xf8fbff);
+        }
+
+        function starSize(mag) { return clamp(9.6 - mag * 1.12, 2.4, 13.2); }
+
+        function createMoonTexture(phase) {
+            const size = 256;
+            const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            const image = ctx.createImageData(size, size);
+            const craters = [];
+            const rng = seededRandom(31337);
+            for (let i = 0; i < 34; i++) craters.push({ x: rng()*1.55-0.78, y: rng()*1.55-0.78, r: 0.025+rng()*0.08, shade: 0.74+rng()*0.18 });
+            const theta = Math.PI - phase * Math.PI * 2;
+            const light = { x: Math.sin(theta), y: 0, z: Math.cos(theta) };
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const nx = (x/(size-1))*2-1, ny = (y/(size-1))*2-1;
+                    const r2 = nx*nx + ny*ny;
+                    const index = (y*size + x)*4;
+                    if (r2 > 1) { image.data[index+3] = 0; continue; }
+                    const nz = Math.sqrt(1 - r2);
+                    const lit = clamp(nx*light.x + nz*light.z, 0, 1);
+                    const limb = Math.pow(nz, 0.42);
+                    let craterShade = 1;
+                    craters.forEach(c => {
+                        const dx = nx - c.x, dy = ny - c.y, d = Math.sqrt(dx*dx+dy*dy);
+                        if (d < c.r) craterShade *= c.shade;
+                        if (Math.abs(d - c.r) < c.r*0.12) craterShade *= 1.08;
+                    });
+                    const brightness = (24 + lit * 205) * limb * craterShade;
+                    image.data[index] = brightness * 0.96;
+                    image.data[index+1] = brightness * 0.98;
+                    image.data[index+2] = brightness * 1.04;
+                    image.data[index+3] = clamp((limb * 1.4) * 255, 0, 255);
+                }
+            }
+            ctx.putImageData(image, 0, 0);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            return texture;
+        }
+
+        function createRadialTexture(stops, size) {
+            const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            const gradient = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+            stops.forEach((color, i) => gradient.addColorStop(i/(stops.length-1), color));
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, size, size);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            return texture;
+        }
+
+        function createCloudHazeTexture() {
+            const size = 256;
+            const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            const rng = seededRandom(424242);
+            ctx.clearRect(0, 0, size, size);
+            ctx.filter = "blur(14px)";
+            for (let i = 0; i < 24; i++) {
+                const x = size * (0.18 + rng() * 0.64);
+                const y = size * (0.24 + rng() * 0.52);
+                const rx = size * (0.16 + rng() * 0.2);
+                const ry = size * (0.09 + rng() * 0.16);
+                const alpha = 0.08 + rng() * 0.07;
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
+                gradient.addColorStop(0, `rgba(255,255,255,${alpha})`);
+                gradient.addColorStop(0.58, `rgba(255,255,255,${alpha * 0.45})`);
+                gradient.addColorStop(1, "rgba(255,255,255,0)");
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, rng() * Math.PI, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.filter = "none";
+            const edge = ctx.createRadialGradient(size / 2, size / 2, size * 0.08, size / 2, size / 2, size * 0.52);
+            edge.addColorStop(0, "rgba(255,255,255,0.28)");
+            edge.addColorStop(0.6, "rgba(255,255,255,0.18)");
+            edge.addColorStop(1, "rgba(255,255,255,0)");
+            ctx.globalCompositeOperation = "destination-in";
+            ctx.fillStyle = edge;
+            ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = "source-over";
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            return texture;
+        }
+
+        function createFallbackGroundTexture() {
+            const canvas = document.createElement("canvas"); canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext("2d");
+            const rng = seededRandom(9090);
+            ctx.fillStyle = "#8d937b"; ctx.fillRect(0, 0, 512, 512);
+            for (let i = 0; i < 180; i++) {
+                ctx.fillStyle = `rgba(${95+rng()*70}, ${105+rng()*70}, ${85+rng()*50}, ${0.08+rng()*0.15})`;
+                ctx.beginPath();
+                ctx.ellipse(rng()*512, rng()*512, 20+rng()*90, 8+rng()*46, rng()*Math.PI, 0, Math.PI*2);
+                ctx.fill();
+            }
+            ctx.strokeStyle = "rgba(210,210,195,0.38)"; ctx.lineWidth = 6;
+            for (let i = 0; i < 12; i++) {
+                ctx.beginPath(); ctx.moveTo(rng()*512, rng()*512);
+                for (let j = 0; j < 4; j++) ctx.lineTo(rng()*512, rng()*512);
+                ctx.stroke();
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(12, 12);
+            texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            return texture;
+        }
+
+        function solarPosition(dateString, hour, lat, lon, utcOffsetSeconds) {
+            const day = dayOfYear(dateString);
+            const latitude = THREE.MathUtils.degToRad(lat);
+            const gamma = (Math.PI * 2 / 365) * (day - 1 + (hour - 12) / 24);
+            const equationOfTime = 229.18 * (0.000075 + 0.001868*Math.cos(gamma) - 0.032077*Math.sin(gamma) - 0.014615*Math.cos(2*gamma) - 0.040849*Math.sin(2*gamma));
+            const declination = 0.006918 - 0.399912*Math.cos(gamma) + 0.070257*Math.sin(gamma) - 0.006758*Math.cos(2*gamma) + 0.000907*Math.sin(2*gamma) - 0.002697*Math.cos(3*gamma) + 0.00148*Math.sin(3*gamma);
+            const offsetMinutes = utcOffsetSeconds / 60;
+            const trueSolarMinutes = (hour * 60 + equationOfTime + 4 * lon - offsetMinutes + 1440) % 1440;
+            let hourAngle = trueSolarMinutes / 4 - 180;
+            if (hourAngle < -180) hourAngle += 360;
+            const hourAngleRad = THREE.MathUtils.degToRad(hourAngle);
+            const cosZenith = Math.sin(latitude)*Math.sin(declination) + Math.cos(latitude)*Math.cos(declination)*Math.cos(hourAngleRad);
+            const zenith = Math.acos(clamp(cosZenith, -1, 1));
+            const elevation = Math.PI/2 - zenith;
+            const azimuth = Math.atan2(Math.sin(hourAngleRad), Math.cos(hourAngleRad)*Math.sin(latitude) - Math.tan(declination)*Math.cos(latitude)) + Math.PI;
+            return { elevation, azimuth };
+        }
+
+        function celestialToVector(azimuth, elevation, radius) {
+            const horizontal = Math.cos(elevation) * radius;
+            return new THREE.Vector3(Math.sin(azimuth) * horizontal, Math.sin(elevation) * radius, -Math.cos(azimuth) * horizontal);
+        }
+
+        function lunarPhase(dateString) {
+            const date = new Date(`${dateString}T12:00:00Z`);
+            const knownNewMoon = Date.UTC(2000, 0, 6, 18, 14, 0);
+            const days = (date.getTime() - knownNewMoon) / 86400000;
+            return ((days % 29.530588853) + 29.530588853) % 29.530588853 / 29.530588853;
+        }
+
+        function localSiderealRadians(dateString, hour, lon, utcOffsetSeconds) {
+            const parts = dateString.split("-").map(Number);
+            const base = parts.length === 3 && parts.every(Number.isFinite) ? Date.UTC(parts[0], parts[1]-1, parts[2], 0,0,0) : Date.now();
+            const utcTime = base + hour*3600000 - utcOffsetSeconds*1000;
+            const julianDate = utcTime/86400000 + 2440587.5;
+            const days = julianDate - 2451545.0;
+            const gmst = 280.46061837 + 360.98564736629 * days;
+            return THREE.MathUtils.degToRad(((gmst + lon) % 360 + 360) % 360);
+        }
+
+        function lonLatToTile(lon, lat, zoom) {
+            const latRad = THREE.MathUtils.degToRad(lat);
+            const n = Math.pow(2, zoom);
+            return { x: ((lon+180)/360)*n, y: (1 - Math.log(Math.tan(latRad) + 1/Math.cos(latRad))/Math.PI) / 2 * n };
+        }
+
+        function tileBoundsMercator(tileX, tileY, zoom) {
+            const n = Math.pow(2, zoom);
+            const lon1 = tileX/n*360 - 180, lon2 = (tileX+1)/n*360 - 180;
+            const lat1 = THREE.MathUtils.radToDeg(Math.atan(Math.sinh(Math.PI*(1 - 2*tileY/n))));
+            const lat2 = THREE.MathUtils.radToDeg(Math.atan(Math.sinh(Math.PI*(1 - 2*(tileY+1)/n))));
+            const nw = lonLatToMercator(lon1, lat1), se = lonLatToMercator(lon2, lat2);
+            return { minX: nw.x, maxX: se.x, minY: se.y, maxY: nw.y };
+        }
+
+        function lonLatToMercator(lon, lat) {
+            const radius = 6378137;
+            const clampedLat = clamp(lat, -85.05112878, 85.05112878);
+            return { x: radius * THREE.MathUtils.degToRad(lon), y: radius * Math.log(Math.tan(Math.PI/4 + THREE.MathUtils.degToRad(clampedLat)/2)) };
+        }
+
+        function mercatorToLonLat(x, y) {
+            const radius = 6378137;
+            const lon = THREE.MathUtils.radToDeg(x/radius);
+            const lat = THREE.MathUtils.radToDeg(2*Math.atan(Math.exp(y/radius)) - Math.PI/2);
+            return { lat: clamp(lat, -85.05112878, 85.05112878), lon: ((lon+180)%360+360)%360-180 };
+        }
+
+        function fallbackWeather() {
+            const hour = getBrowserHour();
+            return {
+                temp: 68, apparentTemp: 68, humidity: 48, code: 2, cloudCover: 42,
+                lowClouds: 20, midClouds: 32, highClouds: 48, windSpeed: 8, windDirection: 260,
+                windGust: 13, precipitation: 0, snowfall: 0,
+                localTime: `${new Date().toISOString().slice(0,10)}T${String(Math.floor(hour)).padStart(2,"0")}:00`,
+                localDate: new Date().toISOString().slice(0,10), timezone: "Local",
+                utcOffsetSeconds: -new Date().getTimezoneOffset() * 60, sunrise: "", sunset: ""
+            };
+        }
+
+        function isStormy(weather) {
+            return weather.cloudCover > 82 || weather.precipitation > 0.01 || weather.snowfall > 0.01 ||
+                   [63,65,80,81,82,95,96,99].includes(weather.code);
+        }
+
+        function valueOr(...vals) { for (const v of vals) if (Number.isFinite(v)) return v; return 0; }
+        function extractDate(v) { const m = typeof v === "string" ? v.match(/^(\d{4}-\d{2}-\d{2})/) : null; return m ? m[1] : ""; }
+        function extractHour(v, fb) { const m = typeof v === "string" ? v.match(/T(\d{2}):(\d{2})/) : null; return m ? Number(m[1]) + Number(m[2])/60 : fb; }
+        function getBrowserHour() { const d = new Date(); return d.getHours() + d.getMinutes()/60; }
+        function dayOfYear(dateString) {
+            const parts = dateString.split("-").map(Number);
+            if (parts.length !== 3 || parts.some(p => !Number.isFinite(p))) return 180;
+            const date = Date.UTC(parts[0], parts[1]-1, parts[2]);
+            const start = Date.UTC(parts[0], 0, 0);
+            return Math.floor((date - start) / 86400000);
+        }
+        function formatHour(v) { const m = Math.round(((v%24)+24)%24*60); return `${String(Math.floor(m/60)%24).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`; }
+        function setStatus(msg, warn) { ui.status.textContent = msg; ui.status.classList.toggle("warn", !!warn); }
+        function clearGroup(group, dispose) {
+            for (let i = group.children.length-1; i >= 0; i--) {
+                const child = group.children[i];
+                if (child === groundBase) continue;
+                group.remove(child);
+                if (dispose) { child.traverse ? child.traverse(disposeObject) : disposeObject(child); }
+            }
+        }
+        function disposeObject(obj) {
+            if (obj.geometry && !obj.userData.sharedGeometry) obj.geometry.dispose();
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            mats.filter(Boolean).forEach(m => {
+                Object.keys(m).forEach(key => { if (m[key]?.isTexture && !m[key].userData?.shared) m[key].dispose(); });
+                m.dispose();
+            });
+        }
+        function seededRandom(seed) { let v = seed>>>0; return () => { v = (v*1664525+1013904223)>>>0; return v/4294967296; }; }
+        function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
+        function lerp(a,b,t) { return a + (b-a)*t; }
+        function smootherstep(t) { const x = clamp(t,0,1); return x*x*x*(x*(x*6-15)+10); }
+        function normalizeRadians(v) { return ((v+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI; }
+    </script>
+</body>
+</html>
