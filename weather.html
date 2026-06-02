@@ -23,8 +23,16 @@
             background: #05080c; color: var(--text);
         }
         canvas { display: block; }
+        #map3d-container {
+            position: fixed; inset: 0; z-index: 0; display: none;
+            background: #05080c; pointer-events: none;
+        }
+        #map3d-container.active { display: block; }
+        #weatherCanvas {
+            position: fixed; inset: 0; z-index: 1;
+        }
         #ui-container {
-            position: absolute; top: 0; right: 0; bottom: 0;
+            position: absolute; top: 0; right: 0; bottom: 0; z-index: 4;
             width: min(380px, 100vw); padding: 18px;
             border-left: 1px solid var(--line); background: var(--panel);
             box-shadow: -18px 0 52px rgba(0,0,0,0.34); backdrop-filter: blur(10px);
@@ -55,6 +63,9 @@
         .creator-section .creator-title { margin-bottom: 9px; }
         .location-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
         .location-fields .wide { grid-column: 1 / -1; }
+        .map-provider-fields {
+            display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px;
+        }
         input, select {
             width: 100%; min-height: 38px; border: 1px solid rgba(255,255,255,0.16);
             border-radius: 7px; padding: 0 10px; background: rgba(255,255,255,0.08);
@@ -104,11 +115,14 @@
         }
         #status.warn { color: var(--warn); }
         #attribution {
-            position: absolute; left: 12px; bottom: 9px;
+            position: absolute; left: 12px; bottom: 9px; z-index: 3;
             max-width: min(720px, calc(100vw - 410px)); padding: 6px 8px;
             border-radius: 6px; background: rgba(0,0,0,0.45); color: rgba(255,255,255,0.78);
             font-size: 0.7rem; line-height: 1.3; text-align: left; pointer-events: none;
         }
+        #attribution.real-map { bottom: 36px; }
+        .cesium-widget, .cesium-widget canvas { width: 100%; height: 100%; }
+        .cesium-viewer-bottom { z-index: 2; }
         @media (max-width: 760px) {
             #ui-container {
                 top: 10px; right: 10px; bottom: auto; width: calc(100vw - 20px);
@@ -118,6 +132,7 @@
             .metric { padding: 8px 6px; }
             .metric b { font-size: 0.86rem; }
             .metric span { font-size: 0.62rem; }
+            .map-provider-fields { grid-template-columns: 1fr; }
             .instructions { display: none; }
             #attribution { left: 12px; right: 12px; max-width: none; text-align: center; }
         }
@@ -125,6 +140,8 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 </head>
 <body>
+    <div id="map3d-container" aria-hidden="true"></div>
+
     <div id="ui-container">
         <div class="header">
             <div>
@@ -147,6 +164,15 @@
                 <button class="effect-toggle active" type="button" data-effect="mountains"><i class="fa-solid fa-mountain-sun"></i><span>Mountains</span></button>
                 <button class="effect-toggle active" type="button" data-effect="terrain"><i class="fa-solid fa-layer-group"></i><span>Terrain</span></button>
                 <button class="effect-toggle active" type="button" data-effect="buildings"><i class="fa-solid fa-city"></i><span>Buildings</span></button>
+                <button class="effect-toggle" type="button" data-effect="google3d"><i class="fa-solid fa-earth-americas"></i><span>Google 3D</span></button>
+                <button class="effect-toggle" type="button" data-effect="free3d"><i class="fa-solid fa-cube"></i><span>Free 3D</span></button>
+            </div>
+            <div class="creator-section">
+                <div class="creator-title"><i class="fa-solid fa-key"></i><span>Google Maps 3D</span></div>
+                <div class="map-provider-fields">
+                    <input id="googleApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Google Maps API key">
+                    <button id="saveGoogleKeyBtn" type="button"><i class="fa-solid fa-check"></i><span>Use</span></button>
+                </div>
             </div>
             <div class="creator-section">
                 <div class="creator-title"><i class="fa-solid fa-map-location-dot"></i><span>Location</span></div>
@@ -220,6 +246,17 @@
         const TERRARIUM_BASE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium";
         const REVERSE_GEOCODE_URL = "https://nominatim.openstreetmap.org/reverse";
         const STAR_API_URL = "https://raw.githubusercontent.com/aduboisforge/Bright-Star-Catalog-JSON/master/BSC.json";
+        const CESIUM_BASE_URL = "https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/";
+        const CESIUM_JS_URL = `${CESIUM_BASE_URL}Cesium.js`;
+        const CESIUM_CSS_URL = `${CESIUM_BASE_URL}Widgets/widgets.css`;
+        const GOOGLE_3D_TILESET_URL = "https://tile.googleapis.com/v1/3dtiles/root.json";
+        const GOOGLE_MAPS_KEY_STORAGE = "weatherExplorerGoogleMapsKey";
+        const OVERPASS_API_URL = "https://overpass-api.de/api/interpreter";
+        const FREE_3D_BUILDING_RADIUS = window.innerWidth < 720 ? 850 : 1450;
+        const FREE_3D_BUILDING_MAX = window.innerWidth < 720 ? 220 : 520;
+        const FREE_3D_BUILDING_RELOAD_DISTANCE = FREE_3D_BUILDING_RADIUS * 0.58;
+        const FREE_3D_BUILDING_STREAM_INTERVAL_MS = 14000;
+        const REAL_MAP_CAMERA_SYNC_INTERVAL_MS = 70;
         const STAR_RADIUS = 11300;
         const URL_PARAMS = new URLSearchParams(window.location.search);
 
@@ -257,9 +294,11 @@
         camera.position.set(0, 260, 920);
         camera.rotation.order = "YXZ";
 
-        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+        renderer.domElement.id = "weatherCanvas";
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setClearColor(0x05080c, 1);
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 0.92;
@@ -280,10 +319,11 @@
         const worldRoot = new THREE.Group();
         const terrainGroup = new THREE.Group();
         const buildingGroup = new THREE.Group();
+        const osmBuildingGroup = new THREE.Group();
         const mountainGroup = new THREE.Group();
         const cloudGroup = new THREE.Group();
         const precipitationGroup = new THREE.Group();
-        worldRoot.add(terrainGroup, buildingGroup, cloudGroup, precipitationGroup);
+        worldRoot.add(terrainGroup, buildingGroup, osmBuildingGroup, cloudGroup, precipitationGroup);
         scene.add(worldRoot);
         scene.add(mountainGroup);
 
@@ -333,13 +373,33 @@
             weather: fallbackWeather(),
             effects: {
                 clouds: true, rain: false, snow: false,
-                stars: true, mountains: true, terrain: true, buildings: true
+                stars: true, mountains: true, terrain: true, buildings: true, google3d: false, free3d: false
             },
             effectDirty: { rain: false, snow: false },
+            realMap: {
+                key: getInitialGoogleMapsApiKey(),
+                loading: false,
+                enabled: false,
+                mounted: false,
+                viewer: null,
+                tileset: null,
+                keyInUse: "",
+                loadId: 0,
+                lastCameraSync: 0
+            },
+            freeMap: {
+                loading: false,
+                enabled: false,
+                loadId: 0,
+                loadedKey: "",
+                loadedCenterMercator: null,
+                lastBuildingUpdate: 0,
+                abortController: null
+            },
             starCatalog: FALLBACK_STARS.slice(),
             starCatalogLoaded: false,
             cloudSprites: [], cloudMaterials: [],
-            buildingMaterials: [], mountainMaterials: [],
+            buildingMaterials: [], osmBuildingMaterials: [], mountainMaterials: [],
             terrainTiles: [],
             terrainTileMap: new Map(),
             terrainBaseElevation: null,
@@ -363,6 +423,8 @@
         };
 
         const ui = {
+            map3dContainer: document.getElementById("map3d-container"),
+            attribution: document.getElementById("attribution"),
             status: document.getElementById("status"),
             locationLabel: document.getElementById("locationLabel"),
             tempValue: document.getElementById("tempValue"),
@@ -381,6 +443,8 @@
             lonInput: document.getElementById("lonInput"),
             locationNameInput: document.getElementById("locationNameInput"),
             applyLocationBtn: document.getElementById("applyLocationBtn"),
+            googleApiKeyInput: document.getElementById("googleApiKeyInput"),
+            saveGoogleKeyBtn: document.getElementById("saveGoogleKeyBtn"),
             effectButtons: Array.from(document.querySelectorAll(".effect-toggle"))
         };
 
@@ -388,6 +452,7 @@
         let isDragging = false;
         let previousMousePosition = { x: 0, y: 0 };
         let yaw = 0, pitch = -0.08;
+        let cesiumLoadPromise = null;
         camera.rotation.set(pitch, yaw, 0, "YXZ");
 
         document.addEventListener("keydown", (event) => {
@@ -434,11 +499,24 @@
             ui.creatorPanel.classList.toggle("open", open);
             ui.creatorBtn.setAttribute("aria-expanded", String(open));
         });
+        ui.googleApiKeyInput.value = state.realMap.key || "";
+        ui.saveGoogleKeyBtn.addEventListener("click", () => activateGoogle3DFromInput());
+        ui.googleApiKeyInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") activateGoogle3DFromInput();
+        });
 
         ui.effectButtons.forEach((button) => {
             button.addEventListener("click", () => {
                 const effect = button.dataset.effect;
                 if (!Object.prototype.hasOwnProperty.call(state.effects, effect)) return;
+                if (effect === "google3d") {
+                    toggleGoogle3D();
+                    return;
+                }
+                if (effect === "free3d") {
+                    toggleFree3D();
+                    return;
+                }
                 state.effects[effect] = !state.effects[effect];
                 if (Object.prototype.hasOwnProperty.call(state.effectDirty, effect)) {
                     state.effectDirty[effect] = true;
@@ -490,7 +568,10 @@
         updateEffectButtons();
         updateTimeSpeedDisplay();
         applyEffectVisibility();
+        updateAttribution();
         updateSkyAnchors();
+        if (state.effects.google3d) enableGoogle3D();
+        if (state.effects.free3d) enableFree3D();
         animate();
 
         async function bootstrap() {
@@ -539,6 +620,10 @@
             buildHorizonMountains(location.lat, location.lon);
             buildProceduralStructures(location.lat, location.lon);
             rebuildTerrainAround(location.lat, location.lon, token);
+            if (state.effects.free3d || state.freeMap.enabled) {
+                state.freeMap.loadedKey = "";
+                enableFree3D();
+            }
 
             try {
                 const weather = await fetchWeather(location.lat, location.lon);
@@ -634,12 +719,22 @@
         }
 
         function applyEffectVisibility() {
+            const externalMapVisible = state.realMap.enabled;
+            const freeMapVisible = state.freeMap.enabled;
+            const externalMapMounted = state.realMap.mounted;
+            ui.map3dContainer.classList.toggle("active", externalMapVisible || externalMapMounted);
+            ui.map3dContainer.setAttribute("aria-hidden", String(!(externalMapVisible || freeMapVisible)));
             cloudGroup.visible = state.effects.clouds;
             precipitationGroup.visible = state.effects.rain || state.effects.snow;
-            stars.visible = state.effects.stars;
-            mountainGroup.visible = state.effects.mountains;
-            terrainGroup.visible = state.effects.terrain;
-            buildingGroup.visible = state.effects.buildings;
+            stars.visible = state.effects.stars && !externalMapVisible;
+            celestial.group.visible = !externalMapVisible;
+            skyDome.visible = !externalMapVisible;
+            mountainGroup.visible = state.effects.mountains && !externalMapVisible;
+            terrainGroup.visible = state.effects.terrain && !externalMapVisible;
+            buildingGroup.visible = state.effects.buildings && !externalMapVisible && !state.freeMap.enabled;
+            osmBuildingGroup.visible = state.effects.buildings && state.freeMap.enabled && !externalMapVisible;
+            updateRendererBackdrop();
+            updateAttribution();
         }
 
         function parsePresetLocation(value) {
@@ -682,6 +777,14 @@
                 state.effects[effect] = URL_PARAMS.get(effect) !== "0";
                 if (Object.prototype.hasOwnProperty.call(state.effectDirty, effect)) state.effectDirty[effect] = true;
             });
+            const realMapParam = URL_PARAMS.get("google3d") ?? URL_PARAMS.get("real3d");
+            if (realMapParam !== null) {
+                const hasKey = Boolean((ui.googleApiKeyInput?.value || state.realMap.key || "").trim());
+                state.effects.google3d = realMapParam !== "0" && hasKey;
+            }
+            const freeMapParam = URL_PARAMS.get("free3d") ?? URL_PARAMS.get("osm3d");
+            if (freeMapParam !== null) state.effects.free3d = freeMapParam !== "0";
+            if (state.effects.google3d && state.effects.free3d) state.effects.google3d = false;
             if (state.effects.rain && state.effects.snow) state.effects.snow = false;
             if (URL_PARAMS.get("creator") === "1") { ui.creatorPanel.classList.add("open"); ui.creatorBtn.setAttribute("aria-expanded", "true"); }
         }
@@ -784,7 +887,7 @@
         }
 
         function manageTerrainTiles(now) {
-            if (!state.effects.terrain || !state.terrainZoom || now - state.lastTerrainUpdate < TERRAIN_STREAM_INTERVAL_MS) return;
+            if (state.realMap.enabled || !state.effects.terrain || !state.terrainZoom || now - state.lastTerrainUpdate < TERRAIN_STREAM_INTERVAL_MS) return;
             state.lastTerrainUpdate = now;
 
             const merc = {
@@ -958,6 +1061,10 @@
 
         function settleObjectsOnTerrain() {
             buildingGroup.children.forEach(child => {
+                if (!child.userData || child.userData.groundOffset === undefined) return;
+                child.position.y = sampleTerrainHeight(child.position.x, child.position.z) + child.userData.groundOffset;
+            });
+            osmBuildingGroup.children.forEach(child => {
                 if (!child.userData || child.userData.groundOffset === undefined) return;
                 child.position.y = sampleTerrainHeight(child.position.x, child.position.z) + child.userData.groundOffset;
             });
@@ -1441,6 +1548,7 @@
             updateCloudLighting(dayFactor, twilightFactor);
             updateNightLights(dayFactor);
             updateMountainLighting(dayFactor, twilightFactor, nightFactor);
+            updateFree3DBuildingLighting(dayFactor, twilightFactor, nightFactor);
             updateSkyAnchors();
         }
 
@@ -1497,6 +1605,573 @@
             });
         }
 
+        function toggleGoogle3D() {
+            if (state.realMap.enabled || state.realMap.loading) {
+                disableGoogle3D("Returned to the procedural terrain and satellite tile map.");
+                return;
+            }
+            if (state.freeMap.enabled || state.freeMap.loading) disableFree3D();
+            enableGoogle3D();
+        }
+
+        function activateGoogle3DFromInput() {
+            const key = ui.googleApiKeyInput.value.trim();
+            if (!key) {
+                setStatus("Paste a Google Maps Platform API key first. Enable the Map Tiles API on that key.", true);
+                return;
+            }
+            state.realMap.key = key;
+            saveGoogleMapsApiKey(key);
+            state.effects.google3d = true;
+            updateEffectButtons();
+            enableGoogle3D();
+        }
+
+        async function enableGoogle3D() {
+            const key = ui.googleApiKeyInput.value.trim();
+            if (!key) {
+                state.realMap.key = "";
+                saveGoogleMapsApiKey("");
+                state.effects.google3d = false;
+                updateEffectButtons();
+                setStatus("Google 3D needs a Google Maps Platform API key with the Map Tiles API enabled.", true);
+                return;
+            }
+            state.realMap.key = key;
+            if (state.freeMap.enabled || state.freeMap.loading) disableFree3D();
+            const loadId = ++state.realMap.loadId;
+            state.realMap.loading = true;
+            state.realMap.mounted = true;
+            state.effects.google3d = true;
+            applyEffectVisibility();
+            updateEffectButtons();
+            setStatus("Loading Google Photorealistic 3D Tiles...");
+
+            try {
+                await loadCesiumLibrary();
+                if (loadId !== state.realMap.loadId) return;
+                await ensureGoogle3DViewer(key);
+                if (loadId !== state.realMap.loadId) {
+                    state.realMap.mounted = false;
+                    applyEffectVisibility();
+                    return;
+                }
+                state.realMap.enabled = true;
+                state.realMap.loading = false;
+                applyEffectVisibility();
+                syncReal3DMapCamera(performance.now(), true);
+                setStatus("Google Photorealistic 3D Tiles active. Detail streams in automatically as you fly closer.");
+            } catch (error) {
+                if (loadId !== state.realMap.loadId) return;
+                console.error("Google 3D map failed", error);
+                state.realMap.loading = false;
+                state.realMap.enabled = false;
+                state.realMap.mounted = false;
+                state.effects.google3d = false;
+                destroyGoogle3DViewer();
+                applyEffectVisibility();
+                updateEffectButtons();
+                setStatus(google3DErrorMessage(error), true);
+            }
+        }
+
+        function disableGoogle3D(statusText) {
+            state.realMap.loadId++;
+            state.realMap.loading = false;
+            state.realMap.enabled = false;
+            state.realMap.mounted = false;
+            state.effects.google3d = false;
+            applyEffectVisibility();
+            updateEffectButtons();
+            if (statusText) setStatus(statusText);
+        }
+
+        function toggleFree3D() {
+            if (state.freeMap.enabled || state.freeMap.loading) {
+                disableFree3D("Returned to the procedural terrain and satellite tile map.");
+                return;
+            }
+            enableFree3D();
+        }
+
+        async function enableFree3D() {
+            const loadId = ++state.freeMap.loadId;
+            if (state.realMap.enabled || state.realMap.loading || state.realMap.mounted) {
+                disableGoogle3D();
+                destroyGoogle3DViewer();
+            }
+            state.effects.google3d = false;
+            state.effects.free3d = true;
+            state.freeMap.loading = true;
+            state.freeMap.enabled = true;
+            applyEffectVisibility();
+            updateEffectButtons();
+            setStatus("Loading nearby OpenStreetMap 3D buildings...");
+
+            try {
+                await loadFree3DBuildings(loadId, getCameraLonLat());
+                if (loadId !== state.freeMap.loadId) {
+                    applyEffectVisibility();
+                    return;
+                }
+                state.freeMap.loading = false;
+                applyEffectVisibility();
+                updateFree3DBuildingLighting();
+                const count = osmBuildingGroup.children.length;
+                setStatus(count ? `Free 3D buildings active. Loaded ${count} OpenStreetMap buildings into the weather scene.` : "Free 3D is active, but no OSM building footprints were found nearby.");
+            } catch (error) {
+                if (loadId !== state.freeMap.loadId) return;
+                console.error("Free 3D buildings failed", error);
+                state.freeMap.abortController = null;
+                state.freeMap.loading = false;
+                state.freeMap.enabled = false;
+                state.effects.free3d = false;
+                clearOSMBuildings();
+                applyEffectVisibility();
+                updateEffectButtons();
+                setStatus("Free 3D buildings could not load. Check browser network access to the Overpass API.", true);
+            }
+        }
+
+        function disableFree3D(statusText) {
+            state.freeMap.loadId++;
+            state.freeMap.abortController?.abort();
+            state.freeMap.abortController = null;
+            state.freeMap.loading = false;
+            state.freeMap.enabled = false;
+            state.effects.free3d = false;
+            clearOSMBuildings();
+            applyEffectVisibility();
+            updateEffectButtons();
+            if (statusText) setStatus(statusText);
+        }
+
+        function loadCesiumLibrary() {
+            if (window.Cesium) return Promise.resolve(window.Cesium);
+            if (cesiumLoadPromise) return cesiumLoadPromise;
+            window.CESIUM_BASE_URL = CESIUM_BASE_URL;
+            if (!document.querySelector(`link[href="${CESIUM_CSS_URL}"]`)) {
+                const link = document.createElement("link");
+                link.rel = "stylesheet";
+                link.href = CESIUM_CSS_URL;
+                document.head.appendChild(link);
+            }
+            cesiumLoadPromise = new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = CESIUM_JS_URL;
+                script.async = true;
+                script.onload = () => window.Cesium ? resolve(window.Cesium) : reject(new Error("Cesium did not initialize"));
+                script.onerror = () => reject(new Error("Cesium script failed to load"));
+                document.head.appendChild(script);
+            });
+            return cesiumLoadPromise;
+        }
+
+        async function loadFree3DBuildings(loadId, center) {
+            const key = free3DBuildingKey(center);
+            if (state.freeMap.loadedKey === key && osmBuildingGroup.children.length) {
+                return;
+            }
+
+            state.freeMap.abortController?.abort();
+            const controller = new AbortController();
+            state.freeMap.abortController = controller;
+            const data = await fetchOSMBuildingWays(center, controller.signal);
+            if (loadId !== state.freeMap.loadId) return;
+
+            const buildings = parseOSMBuildingWays(data, center)
+                .sort((a, b) => b.area - a.area)
+                .slice(0, FREE_3D_BUILDING_MAX);
+            clearOSMBuildings();
+            buildOSMBuildingMeshes(buildings);
+            state.freeMap.loadedKey = key;
+            state.freeMap.loadedCenterMercator = lonLatToMercator(center.lon, center.lat);
+            state.freeMap.lastBuildingUpdate = performance.now();
+            state.freeMap.abortController = null;
+            settleObjectsOnTerrain();
+            updateFree3DBuildingLighting();
+        }
+
+        async function fetchOSMBuildingWays(center, signal) {
+            const query = [
+                "[out:json][timeout:25];",
+                "(",
+                `way["building"]["building"!~"^(no|false)$"](around:${Math.round(FREE_3D_BUILDING_RADIUS)},${center.lat.toFixed(6)},${center.lon.toFixed(6)});`,
+                ");",
+                "out body geom qt;"
+            ].join("");
+            const body = new URLSearchParams({ data: query });
+            const response = await fetch(OVERPASS_API_URL, { method: "POST", body, signal });
+            if (!response.ok) throw new Error(`Overpass request failed: ${response.status}`);
+            return response.json();
+        }
+
+        function parseOSMBuildingWays(data, center) {
+            const elements = Array.isArray(data?.elements) ? data.elements : [];
+            const centerMerc = lonLatToMercator(center.lon, center.lat);
+            const queryCenter = {
+                x: centerMerc.x - state.mapCenterMercator.x,
+                z: state.mapCenterMercator.y - centerMerc.y
+            };
+            const buildings = [];
+            for (const element of elements) {
+                if (element.type !== "way" || !Array.isArray(element.geometry) || element.geometry.length < 4) continue;
+                const tags = element.tags || {};
+                const points = element.geometry.map(point => {
+                    const merc = lonLatToMercator(point.lon, point.lat);
+                    return {
+                        x: merc.x - state.mapCenterMercator.x,
+                        z: state.mapCenterMercator.y - merc.y
+                    };
+                });
+                if (points.length > 1) {
+                    const first = points[0], last = points[points.length - 1];
+                    if (Math.hypot(first.x - last.x, first.z - last.z) < 0.4) points.pop();
+                }
+                if (points.length < 3) continue;
+                const area = Math.abs(polygonAreaXZ(points));
+                if (area < 16 || area > 260000) continue;
+                const center = polygonAverageXZ(points);
+                const distance = Math.hypot(center.x - queryCenter.x, center.z - queryCenter.z);
+                if (distance > FREE_3D_BUILDING_RADIUS * 1.35) continue;
+                const minHeight = clamp(osmLength(tags.min_height || tags["building:min_height"]) || 0, 0, 90);
+                const height = clamp(osmBuildingHeight(tags), minHeight + 2.5, 360);
+                buildings.push({ points, center, area, minHeight, height, tags });
+            }
+            return buildings;
+        }
+
+        function buildOSMBuildingMeshes(buildings) {
+            if (!buildings.length) return;
+            const material = new THREE.MeshStandardMaterial({
+                color: 0xcbd5d6,
+                roughness: 0.86,
+                metalness: 0.02,
+                emissive: new THREE.Color(0xffc577),
+                emissiveIntensity: 0
+            });
+            state.osmBuildingMaterials.push(material);
+
+            buildings.forEach(building => {
+                const shapePoints = building.points.map(point => new THREE.Vector2(
+                    point.x - building.center.x,
+                    -(point.z - building.center.z)
+                ));
+                if (!THREE.ShapeUtils.isClockWise(shapePoints)) shapePoints.reverse();
+                const shape = new THREE.Shape(shapePoints);
+                const visibleHeight = Math.max(2.5, building.height - building.minHeight);
+                const geometry = new THREE.ExtrudeGeometry(shape, {
+                    depth: visibleHeight,
+                    bevelEnabled: false,
+                    curveSegments: 1
+                });
+                geometry.computeVertexNormals();
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.rotation.x = -Math.PI / 2;
+                mesh.position.set(
+                    building.center.x,
+                    sampleTerrainHeight(building.center.x, building.center.z) + building.minHeight,
+                    building.center.z
+                );
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                mesh.userData.groundOffset = building.minHeight;
+                mesh.userData.osmBuilding = true;
+                mesh.userData.height = building.height;
+                osmBuildingGroup.add(mesh);
+            });
+        }
+
+        function clearOSMBuildings() {
+            clearGroup(osmBuildingGroup, true);
+            state.osmBuildingMaterials = [];
+            state.freeMap.loadedKey = "";
+            state.freeMap.loadedCenterMercator = null;
+        }
+
+        function manageFree3DBuildings(now) {
+            if (!state.freeMap.enabled || state.freeMap.loading || now - state.freeMap.lastBuildingUpdate < FREE_3D_BUILDING_STREAM_INTERVAL_MS) return;
+            const loaded = state.freeMap.loadedCenterMercator;
+            if (!loaded) return;
+            const merc = getCameraMercator();
+            if (Math.hypot(merc.x - loaded.x, merc.y - loaded.y) < FREE_3D_BUILDING_RELOAD_DISTANCE) return;
+
+            const loadId = ++state.freeMap.loadId;
+            state.freeMap.loading = true;
+            state.freeMap.lastBuildingUpdate = now;
+            setStatus("Streaming OpenStreetMap buildings around the camera...");
+            loadFree3DBuildings(loadId, getCameraLonLat())
+                .then(() => {
+                    if (loadId !== state.freeMap.loadId) return;
+                    state.freeMap.loading = false;
+                    setStatus(`Free 3D buildings active. Loaded ${osmBuildingGroup.children.length} OpenStreetMap buildings into the weather scene.`);
+                })
+                .catch(error => {
+                    if (loadId !== state.freeMap.loadId) return;
+                    console.warn("Free 3D building refresh failed", error);
+                    state.freeMap.abortController = null;
+                    state.freeMap.loading = false;
+                    setStatus("Could not refresh nearby OSM buildings yet; keeping the current loaded buildings.", true);
+                });
+        }
+
+        function updateFree3DBuildingLighting(dayFactor, twilightFactor, nightFactor) {
+            if (!state.osmBuildingMaterials.length) return;
+            if (!Number.isFinite(dayFactor)) {
+                const sunInfo = solarPosition(state.localDate, state.time, state.location.lat, state.location.lon, state.utcOffsetSeconds);
+                dayFactor = THREE.MathUtils.smoothstep(sunInfo.elevation, -0.08, 0.22);
+                nightFactor = 1 - THREE.MathUtils.smoothstep(sunInfo.elevation, -0.18, 0.04);
+                twilightFactor = Math.max(0, 1 - Math.abs(sunInfo.elevation) / 0.22);
+            }
+            const stormFactor = isStormy(state.weather) ? 0.28 : 0;
+            const color = new THREE.Color(0xcbd5d6)
+                .lerp(new THREE.Color(0xd3b0a2), twilightFactor * 0.32)
+                .lerp(new THREE.Color(0x6f7c8f), nightFactor * 0.62)
+                .lerp(new THREE.Color(0x87919b), stormFactor);
+            const nightGlow = clamp(1 - dayFactor * 1.2, 0, 1);
+            state.osmBuildingMaterials.forEach(material => {
+                material.color.copy(color);
+                material.emissiveIntensity = nightGlow * 0.035;
+            });
+        }
+
+        function free3DBuildingKey(center) {
+            return `${center.lat.toFixed(3)},${center.lon.toFixed(3)},${FREE_3D_BUILDING_RADIUS}`;
+        }
+
+        function osmBuildingHeight(tags) {
+            const explicit = osmLength(tags.height || tags["building:height"]);
+            if (explicit) return explicit;
+            const levels = osmNumber(tags["building:levels"] || tags.levels);
+            if (levels) return levels * 3.2 + 1.5;
+            const type = String(tags.building || "").toLowerCase();
+            if (/apartments|residential|hotel|office|commercial|retail/.test(type)) return 14;
+            if (/industrial|warehouse|civic|public|school|hospital/.test(type)) return 11;
+            if (/garage|garages|shed|hut|roof|carport/.test(type)) return 4.5;
+            return 8.5;
+        }
+
+        function osmLength(value) {
+            if (typeof value !== "string" && !Number.isFinite(value)) return 0;
+            const text = String(value).trim().toLowerCase().replace(",", ".");
+            const match = text.match(/-?\d+(?:\.\d+)?/);
+            if (!match) return 0;
+            const amount = Number(match[0]);
+            if (!Number.isFinite(amount) || amount <= 0) return 0;
+            if (text.includes("ft") || text.includes("feet")) return amount * 0.3048;
+            return amount;
+        }
+
+        function osmNumber(value) {
+            if (typeof value !== "string" && !Number.isFinite(value)) return 0;
+            const match = String(value).replace(",", ".").match(/\d+(?:\.\d+)?/);
+            const amount = match ? Number(match[0]) : 0;
+            return Number.isFinite(amount) ? amount : 0;
+        }
+
+        function polygonAreaXZ(points) {
+            let area = 0;
+            for (let i = 0; i < points.length; i++) {
+                const a = points[i], b = points[(i + 1) % points.length];
+                area += a.x * b.z - b.x * a.z;
+            }
+            return area * 0.5;
+        }
+
+        function polygonAverageXZ(points) {
+            const sum = points.reduce((acc, point) => {
+                acc.x += point.x; acc.z += point.z;
+                return acc;
+            }, { x: 0, z: 0 });
+            return { x: sum.x / points.length, z: sum.z / points.length };
+        }
+
+        async function ensureGoogle3DViewer(key) {
+            const Cesium = window.Cesium;
+            if (!Cesium) throw new Error("Cesium unavailable");
+            if (state.realMap.viewer && state.realMap.keyInUse === key) {
+                state.realMap.mounted = true;
+                ui.map3dContainer.classList.add("active");
+                state.realMap.viewer.resize();
+                setReal3DMapCameraView(state.realMap.viewer);
+                await waitForGoogle3DVisible(state.realMap.viewer, state.realMap.tileset, 4500);
+                return state.realMap.viewer;
+            }
+            destroyGoogle3DViewer();
+            if (Cesium.RequestScheduler?.requestsByServer) {
+                Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = 18;
+            }
+            state.realMap.mounted = true;
+            ui.map3dContainer.classList.add("active");
+
+            const viewer = new Cesium.Viewer(ui.map3dContainer, {
+                animation: false,
+                baseLayerPicker: false,
+                fullscreenButton: false,
+                geocoder: false,
+                homeButton: false,
+                infoBox: false,
+                navigationHelpButton: false,
+                sceneModePicker: false,
+                selectionIndicator: false,
+                timeline: false,
+                shouldAnimate: false,
+                imageryProvider: false,
+                terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+                requestRenderMode: true,
+                maximumRenderTimeChange: Infinity,
+                useBrowserRecommendedResolution: true
+            });
+            configureReal3DScene(viewer);
+            setReal3DMapCameraView(viewer);
+            viewer.scene.globe.show = false;
+            viewer.scene.screenSpaceCameraController.enableInputs = false;
+            viewer.resolutionScale = window.innerWidth < 720 ? 0.82 : 1;
+
+            const tileset = await Cesium.Cesium3DTileset.fromUrl(`${GOOGLE_3D_TILESET_URL}?key=${encodeURIComponent(key)}`, {
+                showCreditsOnScreen: true,
+                maximumScreenSpaceError: window.innerWidth < 720 ? 20 : 12,
+                dynamicScreenSpaceError: true,
+                dynamicScreenSpaceErrorDensity: 0.00278,
+                dynamicScreenSpaceErrorFactor: 3.5,
+                foveatedScreenSpaceError: true,
+                preloadWhenHidden: false
+            });
+            viewer.scene.primitives.add(tileset);
+            state.realMap.viewer = viewer;
+            state.realMap.tileset = tileset;
+            state.realMap.keyInUse = key;
+            await waitForGoogle3DVisible(viewer, tileset, 7000);
+            viewer.scene.requestRender();
+            return viewer;
+        }
+
+        function destroyGoogle3DViewer() {
+            if (!state.realMap.viewer) return;
+            try { state.realMap.viewer.destroy(); } catch (error) { console.warn("Could not destroy Cesium viewer", error); }
+            state.realMap.viewer = null;
+            state.realMap.tileset = null;
+            state.realMap.keyInUse = "";
+            ui.map3dContainer.innerHTML = "";
+        }
+
+        function configureReal3DScene(viewer) {
+            const Cesium = window.Cesium;
+            const scene = viewer.scene;
+            scene.globe.show = false;
+            scene.fog.enabled = false;
+            scene.backgroundColor = Cesium.Color.TRANSPARENT;
+            if (scene.skyBox) scene.skyBox.show = false;
+            if (scene.skyAtmosphere) scene.skyAtmosphere.show = false;
+            if (scene.sun) scene.sun.show = false;
+            if (scene.moon) scene.moon.show = false;
+            if (scene.screenSpaceCameraController) scene.screenSpaceCameraController.enableInputs = false;
+        }
+
+        function setReal3DMapCameraView(viewer) {
+            const Cesium = window.Cesium;
+            const loc = getCameraLonLat();
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            const heading = normalizePositiveRadians(Math.atan2(direction.x, -direction.z));
+            const cesiumPitch = clamp(Math.asin(clamp(direction.y, -1, 1)), -Math.PI / 2 + 0.04, Math.PI / 2 - 0.04);
+            const baseElevation = Number.isFinite(state.terrainBaseElevation) ? state.terrainBaseElevation : 1800;
+            const altitude = Math.max(80, baseElevation + camera.position.y);
+
+            viewer.camera.setView({
+                destination: Cesium.Cartesian3.fromDegrees(loc.lon, loc.lat, altitude),
+                orientation: { heading, pitch: cesiumPitch, roll: 0 }
+            });
+            viewer.scene.requestRender();
+        }
+
+        function waitForGoogle3DVisible(viewer, tileset, timeoutMs) {
+            return new Promise((resolve, reject) => {
+                const visibleEvent = tileset?.tileVisible;
+                const fallbackEvent = tileset?.allTilesLoaded;
+                const event = visibleEvent?.addEventListener ? visibleEvent : fallbackEvent;
+                if (!event?.addEventListener) {
+                    window.setTimeout(resolve, 700);
+                    return;
+                }
+                let done = false;
+                const cleanup = () => {
+                    if (done) return;
+                    done = true;
+                    event.removeEventListener(onLoaded);
+                    window.clearTimeout(timer);
+                };
+                const onLoaded = (tile) => {
+                    if (visibleEvent && !tile) return;
+                    cleanup();
+                    resolve();
+                };
+                const timer = window.setTimeout(() => {
+                    cleanup();
+                    reject(new Error("Timed out waiting for visible Google 3D tiles"));
+                }, timeoutMs);
+                event.addEventListener(onLoaded);
+                if (!visibleEvent && tileset.tilesLoaded) onLoaded({});
+                viewer.resize();
+                viewer.scene.requestRender();
+            });
+        }
+
+        function google3DErrorMessage(error) {
+            const parsed = parseGoogle3DError(error);
+            if (parsed?.statusCode === 403) {
+                return `Google 3D was rejected: ${parsed.message || "this key is not allowed to use Photorealistic 3D Tiles here."}`;
+            }
+            if (parsed?.statusCode === 401) {
+                return `Google 3D authentication failed: ${parsed.message || "check the API key."}`;
+            }
+            if (parsed?.message) {
+                return `Google 3D map could not load: ${parsed.message}`;
+            }
+            return "Google 3D map could not load. Check the API key, billing, referrer restrictions, and Map Tiles API access.";
+        }
+
+        function parseGoogle3DError(error) {
+            const result = {
+                statusCode: error?.statusCode || error?.status || 0,
+                message: error?.message || ""
+            };
+            const body = error?.response;
+            if (typeof body === "string" && body.trim()) {
+                try {
+                    const json = JSON.parse(body);
+                    result.message = json?.error?.message || result.message;
+                    result.statusCode = json?.error?.code || result.statusCode;
+                } catch (parseError) {}
+            }
+            return result;
+        }
+
+        function syncReal3DMapCamera(now, force) {
+            const viewer = state.realMap.viewer;
+            if (!state.realMap.enabled || !viewer || !window.Cesium) return;
+            if (!force && now - state.realMap.lastCameraSync < REAL_MAP_CAMERA_SYNC_INTERVAL_MS) return;
+            state.realMap.lastCameraSync = now;
+            setReal3DMapCameraView(viewer);
+        }
+
+        function updateRendererBackdrop() {
+            renderer.setClearColor(0x05080c, state.realMap.enabled ? 0 : 1);
+            renderer.domElement.style.pointerEvents = "auto";
+        }
+
+        function updateAttribution() {
+            if (!ui.attribution) return;
+            if (state.realMap.enabled) {
+                ui.attribution.textContent = "Weather: Open-Meteo. Real 3D map: Google Photorealistic 3D Tiles via Map Tiles API; Google/Cesium credits are shown in-map.";
+            } else if (state.freeMap.enabled) {
+                ui.attribution.textContent = "Weather: Open-Meteo. Satellite/elevation tiles: Esri and Mapzen/AWS. Free 3D buildings: OpenStreetMap via Overpass API.";
+            } else {
+                ui.attribution.textContent = "Weather: Open-Meteo. Satellite imagery: Esri World Imagery. Elevation: Mapzen/AWS Terrarium tiles. Stars: Yale Bright Star Catalog JSON.";
+            }
+            ui.attribution.classList.toggle("real-map", state.realMap.enabled || state.freeMap.enabled);
+        }
+
         function animate() {
             requestAnimationFrame(animate);
             const now = performance.now();
@@ -1505,7 +2180,9 @@
             advanceTime(dt);
             updateMovement(dt);
             manageTerrainTiles(now);
+            manageFree3DBuildings(now);
             updateCameraLocation(now);
+            syncReal3DMapCamera(now);
             animateClouds(dt);
             animatePrecipitation(dt);
             updateBackdropMountains();
@@ -2113,6 +2790,24 @@
         function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
         function lerp(a,b,t) { return a + (b-a)*t; }
         function smootherstep(t) { const x = clamp(t,0,1); return x*x*x*(x*(x*6-15)+10); }
+        function getInitialGoogleMapsApiKey() {
+            return URL_PARAMS.get("googleKey") || URL_PARAMS.get("mapsKey") || URL_PARAMS.get("key") || getStoredGoogleMapsApiKey();
+        }
+        function getStoredGoogleMapsApiKey() {
+            try { return localStorage.getItem(GOOGLE_MAPS_KEY_STORAGE) || ""; }
+            catch (error) { return ""; }
+        }
+        function saveGoogleMapsApiKey(key) {
+            try {
+                if (key) localStorage.setItem(GOOGLE_MAPS_KEY_STORAGE, key);
+                else localStorage.removeItem(GOOGLE_MAPS_KEY_STORAGE);
+            }
+            catch (error) {}
+        }
+        function normalizePositiveRadians(v) {
+            const full = Math.PI * 2;
+            return ((v % full) + full) % full;
+        }
         function normalizeRadians(v) { return ((v+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI; }
     </script>
 </body>
