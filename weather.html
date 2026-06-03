@@ -130,14 +130,14 @@
             }
             .weather-grid { grid-template-columns: repeat(4, minmax(0,1fr)); gap: 6px; }
             .metric { padding: 8px 6px; }
-            .metric b { font-size: 0.86rem; }
+            .metric b { font-size: 0.74rem; }
             .metric span { font-size: 0.62rem; }
             .map-provider-fields { grid-template-columns: 1fr; }
             .instructions { display: none; }
             #attribution { left: 12px; right: 12px; max-width: none; text-align: center; }
         }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="node_modules/three/build/three.min.js"></script>
 </head>
 <body>
     <div id="map3d-container" aria-hidden="true"></div>
@@ -258,6 +258,7 @@
         const FREE_3D_BUILDING_STREAM_INTERVAL_MS = 14000;
         const REAL_MAP_CAMERA_SYNC_INTERVAL_MS = 70;
         const STAR_RADIUS = 11300;
+        const CLOUD_LAYER_LIFT = 360;
         const URL_PARAMS = new URLSearchParams(window.location.search);
 
         const FALLBACK_STARS = [
@@ -311,7 +312,8 @@
         const cloudGeometries = {
             puff: new THREE.SphereGeometry(1, 18, 12),
             wisp: new THREE.SphereGeometry(1, 12, 8),
-            slab: new THREE.SphereGeometry(1, 16, 8)
+            slab: new THREE.SphereGeometry(1, 16, 8),
+            veil: new THREE.PlaneGeometry(1, 1)
         };
         const cloudHazeTexture = createCloudHazeTexture();
         cloudHazeTexture.userData.shared = true;
@@ -322,6 +324,7 @@
         const osmBuildingGroup = new THREE.Group();
         const mountainGroup = new THREE.Group();
         const cloudGroup = new THREE.Group();
+        const skyVeilGroup = new THREE.Group();
         const precipitationGroup = new THREE.Group();
         worldRoot.add(terrainGroup, buildingGroup, osmBuildingGroup, cloudGroup, precipitationGroup);
         scene.add(worldRoot);
@@ -329,6 +332,7 @@
 
         const skyDome = createSkyDome();
         scene.add(skyDome);
+        scene.add(skyVeilGroup);
 
         const hemiLight = new THREE.HemisphereLight(0xaedfff, 0x29313b, 0.7);
         scene.add(hemiLight);
@@ -398,7 +402,7 @@
             },
             starCatalog: FALLBACK_STARS.slice(),
             starCatalogLoaded: false,
-            cloudSprites: [], cloudMaterials: [],
+            cloudSprites: [], cloudMaterials: [], skyVeils: [],
             buildingMaterials: [], osmBuildingMaterials: [], mountainMaterials: [],
             terrainTiles: [],
             terrainTileMap: new Map(),
@@ -687,8 +691,16 @@
 
             const autoSnow = weather.snowfall > 0.01 || [71,73,75,77,85,86].includes(weather.code);
             const autoRain = !autoSnow && (weather.precipitation > 0.005 || [51,53,55,61,63,65,80,81,82,95,96,99].includes(weather.code));
-            if (!state.effectDirty.snow) state.effects.snow = autoSnow;
-            if (!state.effectDirty.rain) state.effects.rain = autoRain;
+            if (autoSnow) {
+                state.effects.snow = true;
+                state.effects.rain = false;
+            } else if (autoRain) {
+                state.effects.rain = true;
+                state.effects.snow = false;
+            } else {
+                if (!state.effectDirty.snow) state.effects.snow = false;
+                if (!state.effectDirty.rain) state.effects.rain = false;
+            }
             applyUrlOverrides();
 
             updateReadout();
@@ -725,6 +737,7 @@
             ui.map3dContainer.classList.toggle("active", externalMapVisible || externalMapMounted);
             ui.map3dContainer.setAttribute("aria-hidden", String(!(externalMapVisible || freeMapVisible)));
             cloudGroup.visible = state.effects.clouds;
+            skyVeilGroup.visible = state.effects.clouds && !externalMapVisible;
             precipitationGroup.visible = state.effects.rain || state.effects.snow;
             stars.visible = state.effects.stars && !externalMapVisible;
             celestial.group.visible = !externalMapVisible;
@@ -1257,37 +1270,165 @@
             return new THREE.Mesh(geometry, material);
         }
 
+        function buildCloudLayers(weather, forcePrecipitation) {
+            const total = clamp(valueOr(weather.cloudCover, 0), 0, 100);
+            let low = clamp(valueOr(weather.lowClouds, total * 0.45), 0, 100);
+            let mid = clamp(valueOr(weather.midClouds, total * 0.35), 0, 100);
+            let high = clamp(valueOr(weather.highClouds, total * 0.25), 0, 100);
+            const maxLevelCover = Math.max(low, mid, high);
+            if (total > 55 && maxLevelCover < total * 0.45) {
+                low = Math.max(low, total * 0.46);
+                mid = Math.max(mid, total * 0.34);
+                high = Math.max(high, total * 0.24);
+            }
+
+            const prelimPrecipitating = forcePrecipitation || isPrecipitating(weather);
+            if (total > 74) {
+                high = Math.max(high, total * 0.64);
+                mid = Math.max(mid, total * (prelimPrecipitating ? 0.58 : 0.38));
+                if (prelimPrecipitating) low = Math.max(low, total * 0.54);
+            }
+
+            const overcast = isOvercastWeather(weather);
+            const foggy = [45, 48].includes(weather.code);
+            const precipitating = prelimPrecipitating;
+            const convective = [80, 81, 82, 95, 96, 99].includes(weather.code);
+            const lowFactor = low / 100;
+            const midFactor = mid / 100;
+            const highFactor = high / 100;
+            const lowDeck = foggy || low > 62 || (overcast && low > 24);
+            const stratoCover = clamp(
+                (lowDeck ? low : Math.max(0, low - 54) * 1.35) +
+                (overcast ? Math.min(mid, 48) * 0.18 : Math.max(0, mid - 76) * 0.12),
+                0, 100
+            );
+            const cumuloCover = precipitating
+                ? clamp(low * 0.12, 0, 18)
+                : clamp(low * (overcast ? 0.08 : low > 68 ? 0.42 : 1), 0, 100);
+            const nimboCover = precipitating
+                ? clamp(Math.max(total * 0.86, low, mid * 0.78), 42, 100)
+                : 0;
+            const stratoFactor = stratoCover / 100;
+            const cumuloFactor = cumuloCover / 100;
+            const nimboFactor = nimboCover / 100;
+
+            return [
+                {
+                    name: "cirro",
+                    form: overcast && high > 58 ? "cirrostratus" : high > 42 ? "cirrocumulus" : "cirrus",
+                    cover: high,
+                    altitude: 4600 + CLOUD_LAYER_LIFT,
+                    verticalJitter: overcast && high > 58 ? 520 : 820,
+                    spread: lerp(12000, 19000, highFactor),
+                    countScale: overcast && high > 58 ? 0.11 : 0.16,
+                    minCount: high > 8 ? 2 : 1,
+                    opacity: lerp(0.09, overcast ? 0.3 : 0.17, highFactor),
+                    speed: 0.34,
+                    overcast, precipitating,
+                    builder: createCirroCloud
+                },
+                {
+                    name: "alto",
+                    form: overcast || mid > 66 ? "altostratus" : "altocumulus",
+                    cover: mid,
+                    altitude: 3300 + CLOUD_LAYER_LIFT,
+                    verticalJitter: overcast || mid > 66 ? 460 : 650,
+                    spread: lerp(7200, 11000, midFactor),
+                    countScale: overcast || mid > 66 ? 0.15 : 0.22,
+                    minCount: mid > 10 ? 2 : 1,
+                    opacity: lerp(0.12, overcast ? 0.28 : 0.2, midFactor),
+                    speed: 0.58,
+                    overcast, precipitating,
+                    builder: createAltoCloud
+                },
+                {
+                    name: "strato",
+                    form: foggy || overcast || low > 70 ? "stratus" : "stratocumulus",
+                    cover: stratoCover,
+                    altitude: (foggy ? 1050 : overcast ? 1500 : 1850) + CLOUD_LAYER_LIFT,
+                    verticalJitter: overcast || foggy ? 360 : 520,
+                    spread: lerp(7600, 12200, stratoFactor),
+                    countScale: overcast || foggy ? 0.12 : 0.18,
+                    minCount: stratoCover > 15 ? 3 : 1,
+                    opacity: lerp(overcast || foggy ? 0.22 : 0.16, overcast || foggy ? 0.34 : 0.24, stratoFactor),
+                    speed: 0.47,
+                    overcast, precipitating, foggy,
+                    builder: createStratoCloud
+                },
+                {
+                    name: "cumulo",
+                    form: "cumulus",
+                    cover: cumuloCover,
+                    altitude: (overcast ? 1650 : 1550) + CLOUD_LAYER_LIFT,
+                    verticalJitter: 460,
+                    spread: lerp(5600, 8200, cumuloFactor),
+                    countScale: 0.24,
+                    minCount: cumuloCover > 12 ? 3 : 1,
+                    opacity: lerp(0.18, 0.28, cumuloFactor),
+                    speed: 0.9,
+                    overcast, precipitating,
+                    builder: createCumuloCloud
+                },
+                {
+                    name: "nimbo",
+                    form: convective ? "cumulonimbus" : "nimbostratus",
+                    cover: nimboCover,
+                    altitude: (convective ? 980 : 1200) + CLOUD_LAYER_LIFT,
+                    verticalJitter: 320,
+                    spread: lerp(7200, 11500, nimboFactor),
+                    countScale: convective ? 0.14 : 0.11,
+                    minCount: nimboCover > 0 ? 7 : 0,
+                    opacity: lerp(0.28, 0.42, nimboFactor),
+                    speed: 0.65,
+                    overcast: true,
+                    precipitating: true,
+                    convective,
+                    builder: createNimboCloud
+                }
+            ];
+        }
+
         function rebuildClouds() {
             clearGroup(cloudGroup, true);
+            clearGroup(skyVeilGroup, true);
             state.cloudSprites = [];
             state.cloudMaterials = [];
+            state.skyVeils = [];
             const weather = state.weather;
-            const storm = isStormy(weather) || state.effects.rain || state.effects.snow;
-            const layers = [
-                { name: "cirro", cover: clamp(weather.highClouds, 0, 100), altitude: 5200, spread: 9600, countScale: 0.18, opacity: 0.11, speed: 0.42, builder: createCirroCloud },
-                { name: "alto", cover: clamp(weather.midClouds, 0, 100), altitude: 2700, spread: 8200, countScale: 0.26, opacity: 0.13, speed: 0.7, builder: createAltoCloud },
-                { name: "strato", cover: clamp(Math.max(weather.lowClouds * 0.45, weather.midClouds * 0.35), 0, 100), altitude: storm ? 850 : 1450, spread: 7600, countScale: 0.24, opacity: storm ? 0.22 : 0.15, speed: 0.55, builder: createStratoCloud },
-                { name: "cumulo", cover: clamp(weather.lowClouds, 0, 100), altitude: storm ? 650 : 980, spread: 6600, countScale: 0.34, opacity: storm ? 0.24 : 0.17, speed: 1, builder: createCumuloCloud },
-                { name: "nimbo", cover: storm ? clamp(Math.max(weather.lowClouds, weather.cloudCover), 32, 100) : 0, altitude: 500, spread: 6800, countScale: 0.2, opacity: 0.34, speed: 0.82, builder: createNimboCloud }
-            ];
+            const layers = buildCloudLayers(weather, state.effects.rain || state.effects.snow);
             const seed = Math.floor((state.location.lat + 90) * 10000) ^ Math.floor((state.location.lon + 180) * 10000) ^ Math.floor(weather.cloudCover * 31);
             const rng = seededRandom(seed);
-            layers.forEach(layer => {
+            buildSkyVeils(layers, seed);
+            layers.forEach((layer, layerIndex) => {
                 if (layer.cover <= 4) return;
-                const count = Math.max(layer.name === "nimbo" ? 8 : layer.cover > 8 ? 3 : 1, Math.round(layer.cover * layer.countScale));
+                const count = Math.max(layer.minCount || 1, Math.round(layer.cover * layer.countScale));
+                const layerAxis = cloudLayerAxis(layerIndex, rng);
                 for (let i = 0; i < count; i++) {
                     const cloud = layer.builder(layer, rng);
+                    let wrapSpread = layer.spread;
                     if (layer.name === "nimbo" && i === 0) {
-                        cloud.position.set(camera.position.x, 450, camera.position.z - 900);
+                        cloud.position.set(camera.position.x, layer.altitude + 90, camera.position.z - 900);
+                    } else if (layer.overcast && layer.name !== "cumulo" && i < Math.min(3, count)) {
+                        const frontDistance = layer.name === "cirro" ? 8600 : layer.name === "alto" ? 5600 : 5200;
+                        const frontSlots = Math.min(3, count);
+                        const slot = i - (frontSlots - 1) / 2;
+                        const lateralSpacing = layer.name === "cirro" ? 0.2 : 0.15;
+                        wrapSpread = Math.max(layer.spread, frontDistance * 2.12);
+                        cloud.position.set(
+                            camera.position.x + slot * layer.spread * lateralSpacing + (rng() - 0.5) * layer.spread * 0.06,
+                            layer.altitude + (rng() - 0.5) * layer.verticalJitter * 0.36,
+                            camera.position.z - frontDistance + (rng() - 0.5) * 1100
+                        );
+                        cloud.scale.multiplyScalar((layer.name === "cirro" ? 1.22 : 1.08) + rng() * 0.22);
                     } else {
                         cloud.position.set(
                             camera.position.x + (rng() - 0.5) * layer.spread,
-                            layer.altitude + (rng() - 0.5) * (layer.name === "cirro" ? 1050 : 420),
+                            layer.altitude + (rng() - 0.5) * layer.verticalJitter,
                             camera.position.z + (rng() - 0.5) * layer.spread
                         );
                     }
-                    cloud.rotation.y = rng() * Math.PI * 2;
-                    cloud.userData = { layer: layer.name, speed: layer.speed * (0.65 + rng() * 0.7), spread: layer.spread, tintNoise: rng() };
+                    cloud.rotation.y = layerAxis + (rng() - 0.5) * (layer.name === "cirro" ? 0.08 : layer.name === "cumulo" ? 0.18 : 0.14);
+                    cloud.userData = { layer: layer.name, form: layer.form, cover: layer.cover, speed: layer.speed * (0.65 + rng() * 0.7), spread: wrapSpread, tintNoise: rng(), axis: layerAxis };
                     cloudGroup.add(cloud);
                     state.cloudSprites.push(cloud);
                 }
@@ -1295,7 +1436,53 @@
             updateCloudLighting(0.4, 0);
         }
 
+        function cloudLayerAxis(layerIndex, rng) {
+            const wind = state.windVector.lengthSq() > 0.0001 ? state.windVector : new THREE.Vector3(1, 0, 0);
+            const baseAxis = Math.atan2(-wind.z, wind.x || 0.0001);
+            return baseAxis + (layerIndex - 2) * 0.055 + (rng() - 0.5) * 0.05;
+        }
+
+        function buildSkyVeils(layers, seed) {
+            const totalCover = clamp(state.weather.cloudCover / 100, 0, 1);
+            if (totalCover < 0.1 && !layers.some(layer => layer.name === "cirro" && layer.cover > 12)) return;
+            const rng = seededRandom(seed ^ 0x9e3779b9);
+            const veilLayers = layers.filter(layer => layer.name !== "cumulo" && layer.cover > 8);
+            veilLayers.forEach((layer, layerIndex) => {
+                const cover = clamp(layer.cover / 100, 0, 1);
+                const count = layer.name === "cirro"
+                    ? 3 + Math.round(cover * 5)
+                    : layer.name === "alto"
+                        ? 2 + Math.round(cover * 3)
+                        : 1 + Math.round(cover * 2);
+                const axis = cloudLayerAxis(layerIndex, rng);
+                for (let i = 0; i < count; i++) {
+                    const material = createSkyVeilMaterial(layer, seed + layerIndex * 101 + i * 17, rng);
+                    const veil = new THREE.Mesh(cloudGeometries.veil, material);
+                    const altitude = layer.name === "cirro" ? 6500 : layer.name === "alto" ? 5200 : 4100;
+                    const spread = layer.name === "cirro" ? 9500 : 7200;
+                    veil.position.set(
+                        (rng() - 0.5) * spread,
+                        altitude + (rng() - 0.5) * 900,
+                        -2600 + (rng() - 0.5) * spread * 0.8
+                    );
+                    veil.scale.set(
+                        lerp(layer.name === "cirro" ? 5200 : 3200, layer.name === "cirro" ? 9400 : 5600, rng()) * (0.88 + cover * 0.42),
+                        lerp(layer.name === "cirro" ? 980 : 720, layer.name === "cirro" ? 2100 : 1600, rng()),
+                        1
+                    );
+                    veil.rotation.set((rng() - 0.5) * 0.06, 0, axis + (rng() - 0.5) * 0.22);
+                    veil.renderOrder = 1;
+                    veil.userData = { sharedGeometry: true, layer: layer.name, form: layer.form, cover: layer.cover, speed: layer.speed * (0.22 + rng() * 0.16), spread };
+                    skyVeilGroup.add(veil);
+                    state.skyVeils.push(veil);
+                }
+            });
+        }
+
         function createCloudMaterial(layer, opacity, rng) {
+            const edgeSoftness = layer.name === "cirro" ? 1.18 : layer.name === "alto" ? 1.08 : layer.name === "cumulo" ? 0.98 : layer.name === "nimbo" ? 1.02 : 1.05;
+            const innerDensity = layer.name === "cirro" ? 0.42 : layer.name === "alto" ? 0.72 : layer.name === "strato" ? 0.82 : layer.name === "nimbo" ? 1.08 : 0.96;
+            const opacityScale = layer.name === "cirro" ? 0.66 : layer.name === "alto" ? 0.76 : layer.name === "strato" ? 0.88 : layer.name === "cumulo" ? 0.9 : 0.96;
             const material = new THREE.ShaderMaterial({
                 transparent: true,
                 depthWrite: false,
@@ -1303,8 +1490,9 @@
                 fog: false,
                 uniforms: {
                     cloudColor: { value: new THREE.Color(0xffffff) },
-                    baseOpacity: { value: opacity * (0.74 + rng() * 0.22) },
-                    edgeSoftness: { value: layer.name === "cirro" ? 0.86 : 0.94 }
+                    baseOpacity: { value: opacity * opacityScale * (0.68 + rng() * 0.2) },
+                    edgeSoftness: { value: edgeSoftness },
+                    innerDensity: { value: innerDensity }
                 },
                 vertexShader: `
                     varying vec3 vNormalView;
@@ -1320,53 +1508,89 @@
                     uniform vec3 cloudColor;
                     uniform float baseOpacity;
                     uniform float edgeSoftness;
+                    uniform float innerDensity;
                     varying vec3 vNormalView;
                     varying vec3 vViewPosition;
                     void main() {
                         float facing = abs(dot(normalize(vNormalView), normalize(vViewPosition)));
-                        float body = pow(smoothstep(0.0, edgeSoftness, facing), 1.35);
-                        float alpha = baseOpacity * body;
-                        vec3 color = cloudColor;
-                        gl_FragColor = vec4(color, alpha);
+                        float feather = smoothstep(0.0, edgeSoftness, facing);
+                        float core = pow(smoothstep(0.42, 1.0, facing), 0.86);
+                        float denseCore = clamp(core * innerDensity, 0.0, 1.0);
+                        float alpha = baseOpacity * mix(feather * 0.18, feather * 0.7 + core * 0.18, denseCore);
+                        vec3 color = cloudColor * (0.94 + core * 0.08);
+                        gl_FragColor = vec4(color, clamp(alpha, 0.0, baseOpacity));
                     }
                 `
             });
-            material.userData = { layer: layer.name, baseOpacity: material.uniforms.baseOpacity.value, tintNoise: rng(), extraDark: false };
+            material.userData = { layer: layer.name, form: layer.form, cover: layer.cover, baseOpacity: material.uniforms.baseOpacity.value, tintNoise: rng(), extraDark: false };
             state.cloudMaterials.push(material);
             return material;
         }
 
         function createCloudVeilMaterial(layer, opacity, rng) {
-            const material = new THREE.SpriteMaterial({
+            const coverBoost = lerp(0.54, 0.84, clamp((layer.cover || 0) / 100, 0, 1));
+            const formBoost = layer.form === "cirrostratus" ? 1.42 : layer.form === "altostratus" ? 1.18 : 1;
+            const material = new THREE.MeshBasicMaterial({
                 map: cloudHazeTexture,
                 color: 0xffffff,
                 transparent: true,
-                opacity: opacity * (0.5 + rng() * 0.18),
+                opacity: opacity * coverBoost * formBoost * (0.86 + rng() * 0.22),
                 depthWrite: false,
                 depthTest: true,
-                fog: false
+                fog: false,
+                side: THREE.DoubleSide
             });
-            material.userData = { layer: layer.name, baseOpacity: material.opacity, tintNoise: rng(), isCloudVeil: true, extraDark: false };
+            material.userData = { layer: layer.name, form: layer.form, cover: layer.cover, baseOpacity: material.opacity, tintNoise: rng(), isCloudVeil: true, extraDark: false };
+            state.cloudMaterials.push(material);
+            return material;
+        }
+
+        function createSkyVeilMaterial(layer, seed, rng) {
+            const cover = clamp((layer.cover || 0) / 100, 0, 1);
+            const highLayer = layer.name === "cirro";
+            const deckBoost = layer.form === "cirrostratus" || layer.form === "altostratus" || layer.form === "stratus" ? 1.18 : 1;
+            const material = new THREE.MeshBasicMaterial({
+                map: createSkyVeilTexture(seed, layer),
+                color: 0xffffff,
+                transparent: true,
+                opacity: lerp(highLayer ? 0.045 : 0.055, highLayer ? 0.2 : 0.24, cover) * deckBoost * (0.88 + rng() * 0.2),
+                depthWrite: false,
+                depthTest: false,
+                fog: false,
+                side: THREE.DoubleSide
+            });
+            material.userData = {
+                layer: layer.name,
+                form: layer.form,
+                cover: layer.cover,
+                baseOpacity: material.opacity,
+                tintNoise: rng(),
+                isSkyVeil: true,
+                isCloudVeil: true,
+                extraDark: false
+            };
             state.cloudMaterials.push(material);
             return material;
         }
 
         function addCloudVeil(group, layer, rng, x, y, z, sx, sy, rotation) {
-            const sprite = new THREE.Sprite(createCloudVeilMaterial(layer, layer.opacity, rng));
-            sprite.position.set(x, y, z);
-            sprite.scale.set(sx, sy, 1);
-            sprite.material.rotation = rotation || 0;
-            sprite.renderOrder = 2;
-            group.add(sprite);
-            return sprite;
+            const veil = new THREE.Mesh(cloudGeometries.veil, createCloudVeilMaterial(layer, layer.opacity, rng));
+            veil.position.set(x, y, z);
+            veil.scale.set(sx, sy, 1);
+            veil.rotation.set((rng() - 0.5) * 0.04, 0, rotation || 0);
+            veil.renderOrder = 2;
+            veil.userData.sharedGeometry = true;
+            group.add(veil);
+            return veil;
         }
 
-        function addCloudPuff(group, geometry, material, x, y, z, sx, sy, sz, ry) {
+        function addCloudPuff(group, geometry, material, x, y, z, sx, sy, sz, ry, rng) {
+            const random = rng || Math.random;
             const mesh = new THREE.Mesh(geometry, material);
             mesh.userData.sharedGeometry = true;
             mesh.position.set(x, y, z);
             mesh.scale.set(sx, sy, sz);
-            mesh.rotation.set((Math.random() - 0.5) * 0.08, ry || 0, (Math.random() - 0.5) * 0.08);
+            mesh.rotation.set((random() - 0.5) * 0.035, ry || 0, (random() - 0.5) * 0.035);
             mesh.castShadow = false; mesh.receiveShadow = false;
             group.add(mesh);
             return mesh;
@@ -1375,13 +1599,45 @@
         function createCirroCloud(layer, rng) {
             const group = new THREE.Group();
             const material = createCloudMaterial(layer, layer.opacity, rng);
-            const strands = 4 + Math.floor(rng() * 6);
-            addCloudVeil(group, layer, rng, 0, 0, 0, lerp(1050, 1700, rng()), lerp(190, 320, rng()), (rng() - 0.5) * 0.8);
+            const cover = clamp(layer.cover / 100, 0, 1);
+            const deck = layer.form === "cirrostratus";
+            const veilCount = deck ? 2 + Math.floor(cover * 2) : 1;
+            for (let i = 0; i < veilCount; i++) {
+                addCloudVeil(group, layer, rng,
+                    (rng() - 0.5) * 320, (rng() - 0.5) * 50, (rng() - 0.5) * 130,
+                    lerp(deck ? 5800 : 1700, deck ? 9600 : 3100, rng()) * (1 + cover * 0.22),
+                    lerp(deck ? 1050 : 210, deck ? 2350 : 430, rng()),
+                    (rng() - 0.5) * 0.16
+                );
+            }
+            const strands = (deck ? 8 : 6) + Math.floor(rng() * (deck ? 6 : 5));
+            const lineLength = lerp(deck ? 3100 : 1700, deck ? 5200 : 3200, rng()) * (1 + cover * 0.28);
             for (let i = 0; i < strands; i++) {
-                const x = (i - strands / 2) * lerp(130, 220, rng());
+                const t = strands <= 1 ? 0.5 : i / (strands - 1);
+                const wave = Math.sin(t * Math.PI * 2 + rng() * 0.35);
+                const x = (t - 0.5) * lineLength;
                 addCloudPuff(group, cloudGeometries.wisp, material,
-                    x + (rng() - 0.5) * 160, (rng() - 0.5) * 42, (rng() - 0.5) * 210,
-                    lerp(260, 560, rng()), lerp(8, 20, rng()), lerp(24, 58, rng()), (rng() - 0.5) * 0.5);
+                    x + (rng() - 0.5) * 62,
+                    wave * 18 + (rng() - 0.5) * (deck ? 26 : 18),
+                    wave * 42 + (rng() - 0.5) * 52,
+                    lerp(deck ? 620 : 420, deck ? 1280 : 860, rng()) * (1 + cover * 0.36),
+                    lerp(5, deck ? 15 : 11, rng()),
+                    lerp(18, deck ? 62 : 42, rng()),
+                    (rng() - 0.5) * 0.08,
+                    rng
+                );
+            }
+            const tailCount = deck ? 4 : 3;
+            for (let i = 0; i < tailCount; i++) {
+                const t = tailCount <= 1 ? 0.5 : i / (tailCount - 1);
+                addCloudPuff(group, cloudGeometries.wisp, material,
+                    (t - 0.5) * lineLength * 0.84 + (rng() - 0.5) * 80,
+                    (rng() - 0.5) * 22,
+                    (rng() - 0.5) * 82,
+                    lerp(260, 520, rng()), lerp(4, 9, rng()), lerp(12, 26, rng()),
+                    (rng() - 0.5) * 0.06,
+                    rng
+                );
             }
             return group;
         }
@@ -1389,12 +1645,44 @@
         function createAltoCloud(layer, rng) {
             const group = new THREE.Group();
             const material = createCloudMaterial(layer, layer.opacity, rng);
-            const cells = 8 + Math.floor(rng() * 8);
-            addCloudVeil(group, layer, rng, 0, 0, 0, lerp(950, 1450, rng()), lerp(420, 650, rng()), rng() * Math.PI);
+            const cover = clamp(layer.cover / 100, 0, 1);
+            const sheet = layer.form === "altostratus";
+            const veilCount = sheet ? 2 + Math.floor(cover * 2) : 1;
+            for (let i = 0; i < veilCount; i++) {
+                addCloudVeil(group, layer, rng,
+                    (rng() - 0.5) * 280, (rng() - 0.5) * 56, (rng() - 0.5) * 170,
+                    lerp(sheet ? 1450 : 950, sheet ? 2500 : 1600, rng()) * (1 + cover * 0.25),
+                    lerp(sheet ? 540 : 360, sheet ? 900 : 680, rng()),
+                    (rng() - 0.5) * 0.22
+                );
+            }
+            const cells = (sheet ? 7 : 10) + Math.floor(rng() * (sheet ? 8 : 10));
             for (let i = 0; i < cells; i++) {
-                addCloudPuff(group, cloudGeometries.puff, material,
-                    (rng() - 0.5) * 780, (rng() - 0.5) * 90, (rng() - 0.5) * 480,
-                    lerp(120, 250, rng()), lerp(34, 72, rng()), lerp(100, 210, rng()), rng() * Math.PI);
+                if (sheet) {
+                    const t = cells <= 1 ? 0.5 : i / (cells - 1);
+                    addCloudPuff(group, cloudGeometries.slab, material,
+                        (t - 0.5) * lerp(980, 1480, rng()) + (rng() - 0.5) * 110,
+                        (rng() - 0.5) * 54,
+                        (rng() - 0.5) * 320,
+                        lerp(360, 820, rng()) * (1 + cover * 0.35),
+                        lerp(24, 56, rng()),
+                        lerp(160, 370, rng()),
+                        (rng() - 0.5) * 0.16,
+                        rng
+                    );
+                } else {
+                    const columns = 5;
+                    const row = Math.floor(i / columns);
+                    const col = i % columns;
+                    addCloudPuff(group, cloudGeometries.puff, material,
+                        (col - 2) * lerp(120, 175, rng()) + (rng() - 0.5) * 62,
+                        (rng() - 0.5) * 62,
+                        (row - 1) * lerp(105, 155, rng()) + (rng() - 0.5) * 70,
+                        lerp(95, 220, rng()), lerp(32, 76, rng()), lerp(90, 205, rng()),
+                        (rng() - 0.5) * 0.18,
+                        rng
+                    );
+                }
             }
             return group;
         }
@@ -1402,13 +1690,31 @@
         function createStratoCloud(layer, rng) {
             const group = new THREE.Group();
             const material = createCloudMaterial(layer, layer.opacity, rng);
-            const sheets = 5 + Math.floor(rng() * 6);
-            addCloudVeil(group, layer, rng, 0, 8, 0, lerp(1350, 2100, rng()), lerp(420, 690, rng()), rng() * Math.PI);
-            addCloudVeil(group, layer, rng, (rng() - 0.5) * 320, -12, (rng() - 0.5) * 180, lerp(900, 1450, rng()), lerp(280, 480, rng()), rng() * Math.PI);
+            const cover = clamp(layer.cover / 100, 0, 1);
+            const deck = layer.form === "stratus";
+            const veilCount = deck ? 3 : 2;
+            for (let i = 0; i < veilCount; i++) {
+                addCloudVeil(group, layer, rng,
+                    (rng() - 0.5) * 360, (rng() - 0.5) * 48, (rng() - 0.5) * 230,
+                    lerp(deck ? 1700 : 1120, deck ? 3100 : 2200, rng()) * (1 + cover * 0.28),
+                    lerp(deck ? 520 : 330, deck ? 920 : 620, rng()),
+                    (rng() - 0.5) * 0.2
+                );
+            }
+            const sheets = (deck ? 7 : 5) + Math.floor(rng() * (deck ? 8 : 6));
             for (let i = 0; i < sheets; i++) {
+                const t = sheets <= 1 ? 0.5 : i / (sheets - 1);
+                const centerBias = 1 - Math.abs(t - 0.5) * 2;
                 addCloudPuff(group, cloudGeometries.slab, material,
-                    (rng() - 0.5) * 980, (rng() - 0.5) * 70 + i * 10, (rng() - 0.5) * 520,
-                    lerp(340, 760, rng()), lerp(28, 58, rng()), lerp(180, 360, rng()), rng() * Math.PI);
+                    (t - 0.5) * lerp(950, 1500, rng()) + (rng() - 0.5) * 120,
+                    (rng() - 0.5) * (deck ? 48 : 62) + centerBias * 18,
+                    (rng() - 0.5) * lerp(340, 540, rng()),
+                    lerp(deck ? 580 : 360, deck ? 1220 : 820, rng()) * (1 + cover * 0.34),
+                    lerp(20, deck ? 50 : 62, rng()),
+                    lerp(deck ? 260 : 190, deck ? 520 : 400, rng()),
+                    (rng() - 0.5) * 0.14,
+                    rng
+                );
             }
             return group;
         }
@@ -1416,14 +1722,40 @@
         function createCumuloCloud(layer, rng) {
             const group = new THREE.Group();
             const material = createCloudMaterial(layer, layer.opacity, rng);
-            const puffs = 12 + Math.floor(rng() * 12);
-            addCloudVeil(group, layer, rng, 0, 105, 0, lerp(900, 1350, rng()), lerp(520, 820, rng()), rng() * Math.PI);
-            addCloudVeil(group, layer, rng, (rng() - 0.5) * 220, 40, (rng() - 0.5) * 170, lerp(620, 940, rng()), lerp(360, 560, rng()), rng() * Math.PI);
+            const cover = clamp(layer.cover / 100, 0, 1);
+            const puffs = 14 + Math.floor(rng() * 8 + cover * 8);
+            addCloudVeil(group, layer, rng, 0, 110, 0, lerp(820, 1220, rng()), lerp(420, 660, rng()), (rng() - 0.5) * 0.2);
+            addCloudVeil(group, layer, rng, (rng() - 0.5) * 130, 54, (rng() - 0.5) * 90, lerp(520, 760, rng()), lerp(280, 440, rng()), (rng() - 0.5) * 0.22);
+            addCloudPuff(group, cloudGeometries.slab, material,
+                0, -6, 0,
+                lerp(430, 720, rng()), lerp(20, 36, rng()), lerp(280, 430, rng()),
+                (rng() - 0.5) * 0.16,
+                rng
+            );
             for (let i = 0; i < puffs; i++) {
-                const mound = Math.sin((i / puffs) * Math.PI);
+                const t = puffs <= 1 ? 0.5 : i / (puffs - 1);
+                const mound = Math.sin(t * Math.PI);
+                const centerBias = 1 - Math.abs(t - 0.5) * 2;
                 addCloudPuff(group, cloudGeometries.puff, material,
-                    (rng() - 0.5) * 660, mound * lerp(80, 240, rng()) + (rng() - 0.5) * 50, (rng() - 0.5) * 520,
-                    lerp(110, 270, rng()), lerp(70, 170, rng()), lerp(100, 250, rng()), rng() * Math.PI);
+                    (t - 0.5) * lerp(430, 620, rng()) + (rng() - 0.5) * 90,
+                    lerp(18, 245, mound) * (0.9 + cover * 0.2) + (rng() - 0.5) * 36,
+                    (rng() - 0.5) * lerp(220, 350, 1 - centerBias * 0.25),
+                    lerp(120, 290, rng()) * (0.82 + centerBias * 0.34),
+                    lerp(70, 185, rng()) * (0.86 + mound * 0.3),
+                    lerp(105, 265, rng()) * (0.86 + centerBias * 0.24),
+                    (rng() - 0.5) * 0.18,
+                    rng
+                );
+            }
+            const edgePuffs = 4 + Math.floor(rng() * 4);
+            for (let i = 0; i < edgePuffs; i++) {
+                const side = i % 2 === 0 ? -1 : 1;
+                addCloudPuff(group, cloudGeometries.wisp, material,
+                    side * lerp(235, 360, rng()), lerp(18, 105, rng()), (rng() - 0.5) * 230,
+                    lerp(120, 250, rng()), lerp(28, 74, rng()), lerp(80, 180, rng()),
+                    (rng() - 0.5) * 0.18,
+                    rng
+                );
             }
             return group;
         }
@@ -1433,18 +1765,55 @@
             const material = createCloudMaterial(layer, layer.opacity, rng);
             const base = createCloudMaterial(layer, layer.opacity * 1.08, rng);
             base.userData.extraDark = true;
-            const veil = addCloudVeil(group, layer, rng, 0, 115, 0, lerp(1300, 1900, rng()), lerp(780, 1120, rng()), rng() * Math.PI);
+            const cover = clamp(layer.cover / 100, 0, 1);
+            const convective = layer.form === "cumulonimbus";
+            const veil = addCloudVeil(group, layer, rng, 0, 260, 0, lerp(1450, 2350, rng()) * (1 + cover * 0.2), lerp(650, 980, rng()), (rng() - 0.5) * 0.18);
             veil.material.userData.extraDark = true;
-            addCloudVeil(group, layer, rng, (rng() - 0.5) * 260, -45, (rng() - 0.5) * 240, lerp(1050, 1550, rng()), lerp(440, 710, rng()), rng() * Math.PI);
-            for (let i = 0; i < 10; i++) {
-                addCloudPuff(group, cloudGeometries.slab, base,
-                    (rng() - 0.5) * 900, -50 + (rng() - 0.5) * 40, (rng() - 0.5) * 650,
-                    lerp(240, 520, rng()), lerp(62, 120, rng()), lerp(180, 400, rng()), rng() * Math.PI);
+            addCloudVeil(group, layer, rng, (rng() - 0.5) * 180, 130, (rng() - 0.5) * 150, lerp(900, 1450, rng()), lerp(390, 620, rng()), (rng() - 0.5) * 0.18);
+            if (convective) {
+                addCloudVeil(group, layer, rng, (rng() - 0.5) * 180, 760, (rng() - 0.5) * 150, lerp(1350, 2200, rng()), lerp(360, 620, rng()), (rng() - 0.5) * 0.18);
             }
-            for (let i = 0; i < 12; i++) {
+            const baseSheets = (convective ? 10 : 13) + Math.floor(rng() * 5);
+            for (let i = 0; i < baseSheets; i++) {
+                const t = baseSheets <= 1 ? 0.5 : i / (baseSheets - 1);
+                addCloudPuff(group, cloudGeometries.slab, base,
+                    (t - 0.5) * 980 + (rng() - 0.5) * 120,
+                    15 + (rng() - 0.5) * 72,
+                    (rng() - 0.5) * 460,
+                    lerp(300, 620, rng()) * (1 + cover * 0.22),
+                    lerp(105, 210, rng()),
+                    lerp(240, 520, rng()),
+                    (rng() - 0.5) * 0.16,
+                    rng
+                );
+            }
+            const underPuffs = 5 + Math.floor(rng() * 5);
+            for (let i = 0; i < underPuffs; i++) {
+                addCloudPuff(group, cloudGeometries.puff, base,
+                    (rng() - 0.5) * 820,
+                    -35 + rng() * 120,
+                    (rng() - 0.5) * 420,
+                    lerp(150, 330, rng()),
+                    lerp(95, 180, rng()),
+                    lerp(140, 310, rng()),
+                    (rng() - 0.5) * 0.18,
+                    rng
+                );
+            }
+            const upperPuffs = (convective ? 16 : 9) + Math.floor(rng() * 6);
+            for (let i = 0; i < upperPuffs; i++) {
+                const t = upperPuffs <= 1 ? 0.5 : i / (upperPuffs - 1);
+                const tower = convective ? Math.sin(t * Math.PI) : 0.35 + rng() * 0.35;
                 addCloudPuff(group, cloudGeometries.puff, material,
-                    (rng() - 0.5) * 780, lerp(80, 440, rng()), (rng() - 0.5) * 620,
-                    lerp(150, 360, rng()), lerp(110, 260, rng()), lerp(140, 330, rng()), rng() * Math.PI);
+                    (t - 0.5) * (convective ? 650 : 780) + (rng() - 0.5) * 120,
+                    convective ? lerp(90, 760, tower) + (rng() - 0.5) * 80 : lerp(70, 320, rng()),
+                    (rng() - 0.5) * (convective ? 430 : 500),
+                    lerp(170, convective ? 390 : 330, rng()),
+                    lerp(110, convective ? 280 : 210, rng()),
+                    lerp(150, convective ? 360 : 310, rng()),
+                    (rng() - 0.5) * 0.18,
+                    rng
+                );
             }
             return group;
         }
@@ -1555,26 +1924,72 @@
         function updateCloudLighting(dayFactor, twilightFactor) {
             const weather = state.weather;
             const storm = isStormy(weather) || state.effects.rain || state.effects.snow;
+            const precipitating = isPrecipitating(weather) || state.effects.rain || state.effects.snow;
+            const overcast = isOvercastWeather(weather);
             const nightFactor = 1 - dayFactor;
-            const stormColor = new THREE.Color(storm ? 0x5f6671 : 0xc7d0d8);
-            const dayWhite = new THREE.Color(0xf7f8f4);
+            const totalCover = clamp(weather.cloudCover / 100, 0, 1);
+            const levelCover = {
+                cirro: clamp(weather.highClouds / 100, 0, 1),
+                alto: clamp(weather.midClouds / 100, 0, 1),
+                strato: clamp(weather.lowClouds / 100, 0, 1),
+                cumulo: clamp(weather.lowClouds / 100, 0, 1),
+                nimbo: totalCover
+            };
+            const dayWhite = new THREE.Color(0xfbfcf8);
+            const iceWhite = new THREE.Color(0xf8fbff);
+            const fairGray = new THREE.Color(0xe7ecef);
+            const overcastGray = new THREE.Color(0xb8bec4);
+            const rainGray = new THREE.Color(storm ? 0x626a74 : 0x747c86);
             const sunsetWarm = new THREE.Color(0xffb284);
+            const twilightRose = new THREE.Color(0xff82ad);
+            const twilightLavender = new THREE.Color(0x9c8ce6);
+            const skyPaleBlue = new THREE.Color(0xbfdff1);
+            const skyDeepBlue = new THREE.Color(0x5e91dd);
             const nightBlue = new THREE.Color(0x273047);
             state.cloudMaterials.forEach(material => {
                 const layer = material.userData.layer;
-                const layerWeight = layer === "nimbo" ? 0.46 : layer === "cumulo" ? 0.28 : layer === "strato" ? 0.24 : layer === "alto" ? 0.15 : 0.04;
-                const color = dayWhite.clone()
-                    .lerp(stormColor, layerWeight + (weather.cloudCover / 100) * 0.28 + (storm ? 0.32 : 0))
-                    .lerp(sunsetWarm, twilightFactor * 0.15)  // reduced sunset
-                    .lerp(nightBlue, nightFactor * 0.3);      // reduced night
-                if (material.userData.extraDark) color.lerp(new THREE.Color(0x59606a), 0.36);
-                const lightOpacity = material.userData.baseOpacity * (0.78 + dayFactor * 0.16 + nightFactor * 0.08 + (storm ? 0.08 : 0));
+                const cover = levelCover[layer] || totalCover;
+                let color = dayWhite.clone();
+                if (layer === "cirro") {
+                    color.lerp(iceWhite, 0.55).lerp(fairGray, (overcast ? 0.16 : 0.05) * cover);
+                } else if (layer === "alto") {
+                    color.lerp(fairGray, 0.12 + cover * (overcast ? 0.32 : 0.14));
+                } else if (layer === "strato") {
+                    color.lerp(overcastGray, 0.24 + cover * 0.34 + (overcast ? 0.2 : 0));
+                } else if (layer === "cumulo") {
+                    color.lerp(fairGray, precipitating ? 0.22 : 0.04 + cover * 0.05);
+                } else if (layer === "nimbo") {
+                    color.lerp(rainGray, 0.54 + totalCover * 0.22);
+                }
+                if (precipitating && layer !== "cumulo" && layer !== "cirro") color.lerp(rainGray, layer === "nimbo" ? 0.2 : 0.12);
+                color
+                    .lerp(sunsetWarm, twilightFactor * (layer === "cumulo" ? 0.18 : 0.13))
+                    .lerp(nightBlue, nightFactor * 0.3);
+                if (material.userData.isSkyVeil) {
+                    const skyTint = skyPaleBlue.clone()
+                        .lerp(skyDeepBlue, dayFactor * 0.18)
+                        .lerp(twilightRose, twilightFactor * 0.58)
+                        .lerp(twilightLavender, twilightFactor * 0.34)
+                        .lerp(nightBlue, nightFactor * 0.64);
+                    color.lerp(skyTint, layer === "cirro" ? 0.72 : 0.58);
+                } else if (layer === "cirro" || layer === "alto") {
+                    const skyTint = skyPaleBlue.clone().lerp(twilightRose, twilightFactor * 0.42).lerp(nightBlue, nightFactor * 0.42);
+                    color.lerp(skyTint, layer === "cirro" ? 0.34 : 0.18);
+                }
+                if (material.userData.extraDark) color.lerp(new THREE.Color(0x59606a), precipitating ? 0.4 : 0.28);
+                let opacityBoost = 0.82 + dayFactor * 0.18 + nightFactor * 0.08;
+                if (layer === "strato" && overcast) opacityBoost += 0.14;
+                if (layer === "cumulo" && !precipitating && !overcast) opacityBoost += 0.08;
+                if (layer === "nimbo") opacityBoost += 0.14;
+                if (material.userData.isSkyVeil) opacityBoost *= 0.82 + twilightFactor * 0.52 + totalCover * 0.2;
+                const lightOpacity = material.userData.baseOpacity * opacityBoost;
                 if (material.uniforms?.cloudColor) {
                     material.uniforms.cloudColor.value.copy(color);
                     material.uniforms.baseOpacity.value = lightOpacity;
                 } else {
                     material.color.copy(color);
-                    material.opacity = lightOpacity * (material.userData.isCloudVeil ? 0.92 : 1);
+                    const veilOpacity = material.userData.isSkyVeil ? 0.82 : layer === "cumulo" ? 0.74 : 0.92;
+                    material.opacity = lightOpacity * (material.userData.isCloudVeil ? veilOpacity : 1);
                 }
             });
         }
@@ -2183,6 +2598,7 @@
             manageFree3DBuildings(now);
             updateCameraLocation(now);
             syncReal3DMapCamera(now);
+            animateSkyVeils(dt);
             animateClouds(dt);
             animatePrecipitation(dt);
             updateBackdropMountains();
@@ -2295,8 +2711,22 @@
 
         function updateSkyAnchors() {
             skyDome.position.copy(camera.position);
+            skyVeilGroup.position.copy(camera.position);
             celestial.group.position.copy(camera.position);
             stars.position.copy(camera.position);
+        }
+
+        function animateSkyVeils(dt) {
+            state.skyVeils.forEach(veil => {
+                const speed = veil.userData.speed || 1;
+                veil.position.x += state.windVector.x * speed * dt * 3.2;
+                veil.position.z += state.windVector.z * speed * dt * 3.2;
+                const limit = veil.userData.spread || 9000;
+                if (veil.position.x > limit) veil.position.x = -limit;
+                if (veil.position.x < -limit) veil.position.x = limit;
+                if (veil.position.z > limit * 0.65) veil.position.z = -limit * 0.65;
+                if (veil.position.z < -limit * 0.65) veil.position.z = limit * 0.65;
+            });
         }
 
         function animateClouds(dt) {
@@ -2615,16 +3045,31 @@
             const ctx = canvas.getContext("2d");
             const rng = seededRandom(424242);
             ctx.clearRect(0, 0, size, size);
-            ctx.filter = "blur(14px)";
-            for (let i = 0; i < 24; i++) {
+            ctx.filter = "blur(18px)";
+            for (let i = 0; i < 34; i++) {
                 const x = size * (0.18 + rng() * 0.64);
                 const y = size * (0.24 + rng() * 0.52);
-                const rx = size * (0.16 + rng() * 0.2);
-                const ry = size * (0.09 + rng() * 0.16);
-                const alpha = 0.08 + rng() * 0.07;
+                const rx = size * (0.13 + rng() * 0.22);
+                const ry = size * (0.08 + rng() * 0.18);
+                const alpha = 0.09 + rng() * 0.1;
                 const gradient = ctx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
                 gradient.addColorStop(0, `rgba(255,255,255,${alpha})`);
-                gradient.addColorStop(0.58, `rgba(255,255,255,${alpha * 0.45})`);
+                gradient.addColorStop(0.44, `rgba(255,255,255,${alpha * 0.64})`);
+                gradient.addColorStop(0.78, `rgba(255,255,255,${alpha * 0.22})`);
+                gradient.addColorStop(1, "rgba(255,255,255,0)");
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, rng() * Math.PI, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            for (let i = 0; i < 12; i++) {
+                const x = size * (0.34 + rng() * 0.32);
+                const y = size * (0.36 + rng() * 0.28);
+                const rx = size * (0.12 + rng() * 0.14);
+                const ry = size * (0.09 + rng() * 0.12);
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
+                gradient.addColorStop(0, "rgba(255,255,255,0.16)");
+                gradient.addColorStop(0.55, "rgba(255,255,255,0.08)");
                 gradient.addColorStop(1, "rgba(255,255,255,0)");
                 ctx.fillStyle = gradient;
                 ctx.beginPath();
@@ -2633,8 +3078,70 @@
             }
             ctx.filter = "none";
             const edge = ctx.createRadialGradient(size / 2, size / 2, size * 0.08, size / 2, size / 2, size * 0.52);
-            edge.addColorStop(0, "rgba(255,255,255,0.28)");
-            edge.addColorStop(0.6, "rgba(255,255,255,0.18)");
+            edge.addColorStop(0, "rgba(255,255,255,0.48)");
+            edge.addColorStop(0.55, "rgba(255,255,255,0.27)");
+            edge.addColorStop(0.82, "rgba(255,255,255,0.08)");
+            edge.addColorStop(1, "rgba(255,255,255,0)");
+            ctx.globalCompositeOperation = "destination-in";
+            ctx.fillStyle = edge;
+            ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = "source-over";
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            return texture;
+        }
+
+        function createSkyVeilTexture(seed, layer) {
+            const size = 512;
+            const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            const rng = seededRandom(seed ^ 0x51f15e);
+            ctx.clearRect(0, 0, size, size);
+            ctx.filter = layer.name === "cirro" ? "blur(20px)" : "blur(28px)";
+            const bands = layer.name === "cirro" ? 18 : 12;
+            for (let i = 0; i < bands; i++) {
+                const y = size * (0.18 + rng() * 0.64);
+                const x = size * (-0.08 + rng() * 0.28);
+                const width = size * (0.58 + rng() * 0.72);
+                const height = size * (0.028 + rng() * (layer.name === "cirro" ? 0.05 : 0.095));
+                const alpha = (layer.name === "cirro" ? 0.045 : 0.06) + rng() * (layer.name === "cirro" ? 0.07 : 0.09);
+                ctx.save();
+                ctx.translate(size * 0.5, y);
+                ctx.rotate((rng() - 0.5) * 0.28);
+                const gradient = ctx.createLinearGradient(-width * 0.55, 0, width * 0.55, 0);
+                gradient.addColorStop(0, "rgba(255,255,255,0)");
+                gradient.addColorStop(0.18, `rgba(255,255,255,${alpha * 0.42})`);
+                gradient.addColorStop(0.5, `rgba(255,255,255,${alpha})`);
+                gradient.addColorStop(0.82, `rgba(255,255,255,${alpha * 0.38})`);
+                gradient.addColorStop(1, "rgba(255,255,255,0)");
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.ellipse(x, 0, width, height, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+            ctx.filter = "blur(34px)";
+            for (let i = 0; i < 8; i++) {
+                const x = size * (0.18 + rng() * 0.64);
+                const y = size * (0.2 + rng() * 0.58);
+                const rx = size * (0.18 + rng() * 0.26);
+                const ry = size * (0.08 + rng() * 0.14);
+                const alpha = 0.035 + rng() * 0.05;
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
+                gradient.addColorStop(0, `rgba(255,255,255,${alpha})`);
+                gradient.addColorStop(0.65, `rgba(255,255,255,${alpha * 0.34})`);
+                gradient.addColorStop(1, "rgba(255,255,255,0)");
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, (rng() - 0.5) * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.filter = "none";
+            const edge = ctx.createRadialGradient(size / 2, size / 2, size * 0.12, size / 2, size / 2, size * 0.58);
+            edge.addColorStop(0, "rgba(255,255,255,0.9)");
+            edge.addColorStop(0.62, "rgba(255,255,255,0.54)");
             edge.addColorStop(1, "rgba(255,255,255,0)");
             ctx.globalCompositeOperation = "destination-in";
             ctx.fillStyle = edge;
@@ -2753,8 +3260,17 @@
         }
 
         function isStormy(weather) {
-            return weather.cloudCover > 82 || weather.precipitation > 0.01 || weather.snowfall > 0.01 ||
+            return weather.precipitation > 0.01 || weather.snowfall > 0.01 ||
                    [63,65,80,81,82,95,96,99].includes(weather.code);
+        }
+
+        function isPrecipitating(weather) {
+            return weather.precipitation > 0.005 || weather.snowfall > 0.01 ||
+                   [51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96,99].includes(weather.code);
+        }
+
+        function isOvercastWeather(weather) {
+            return weather.code === 3 || clamp(valueOr(weather.cloudCover, 0), 0, 100) >= 88;
         }
 
         function valueOr(...vals) { for (const v of vals) if (Number.isFinite(v)) return v; return 0; }
