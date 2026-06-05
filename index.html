@@ -355,7 +355,7 @@
 
         .simulators {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 14px;
         }
 
@@ -501,6 +501,7 @@
 
         .swerve { --card-a: rgba(53,215,255,0.34); --card-b: rgba(255,217,77,0.22); --card-text: #5de5ff; }
         .calc { --card-a: rgba(53,215,255,0.24); --card-b: rgba(39,216,135,0.26); --card-text: #42deff; }
+        .titration { --card-a: rgba(39,216,135,0.28); --card-b: rgba(255,55,127,0.26); --card-text: #8ef0aa; }
         .weather { --card-a: rgba(255,55,127,0.26); --card-b: rgba(53,215,255,0.28); --card-text: #ff8db5; }
         .physics { --card-a: rgba(255,217,77,0.28); --card-b: rgba(255,55,127,0.28); --card-text: #ffd94d; }
 
@@ -597,6 +598,7 @@
             <nav class="nav" aria-label="Simulator shortcuts">
                 <a href="swerveSim.html">Swerve</a>
                 <a href="calc.html">Calculus</a>
+                <a href="titration.html">Titration</a>
                 <a href="weather.html">Weather</a>
                 <a href="rollecoaste.html">Physics</a>
             </nav>
@@ -607,7 +609,7 @@
                 <div class="eyebrow">Simulation Portal</div>
                 <h1 id="page-title">Cascade Simulators</h1>
                 <p class="lead">
-                    A polished launch deck for hands-on mechanics, calculus, weather, and motion experiments.
+                    A polished launch deck for hands-on mechanics, calculus, chemistry, weather, and motion experiments.
                     Pick a module and jump straight into the interactive scene.
                 </p>
                 <div class="quick-actions" aria-label="Primary actions">
@@ -654,6 +656,21 @@
                 </a>
             </article>
 
+            <article class="sim-card titration">
+                <div class="sim-media">
+                    <img src="assets/cascade.png" alt="Titration simulator icon">
+                </div>
+                <div class="sim-content">
+                    <p class="sim-kicker">Chemistry</p>
+                    <h2>Titration Lab</h2>
+                    <p>Control a stopcock, drip titrant into an Erlenmeyer flask, and watch the endpoint indicator respond.</p>
+                </div>
+                <a class="launch" href="titration.html" aria-label="Launch Titration Lab">
+                    <span>Launch simulator</span>
+                    <span aria-hidden="true">&rsaquo;</span>
+                </a>
+            </article>
+
             <article class="sim-card weather">
                 <div class="sim-media">
                     <img src="assets/weather.png" alt="Weather explorer icon">
@@ -687,8 +704,8 @@
 
         <section class="status-strip" aria-label="Site details">
             <div class="status-item">
-                <strong>4 Modules</strong>
-                <span>Robotics, calculus, weather, and physics in one launcher.</span>
+                <strong>5 Modules</strong>
+                <span>Robotics, calculus, chemistry, weather, and physics in one launcher.</span>
             </div>
             <div class="status-item">
                 <strong>Local First</strong>
